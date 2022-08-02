@@ -27,4 +27,4 @@ RUN \
 COPY --from=builder /usr/bin/cosmovisor /usr/bin/cosmovisor
 
 ENTRYPOINT ["tini", "--"]
-CMD ["cosmovisor", "--help"]
+CMD ["cosmovisor", "run"]
