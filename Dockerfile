@@ -3,7 +3,8 @@ FROM golang as builder
 ARG VERSION=v1.2.0
 
 RUN \
-    git clone https://github.com/cosmos/cosmos-sdk \
+    GOBIN=/usr/bin go install github.com/schwarzit/go-template/cmd/gt@latest \
+ && git clone https://github.com/cosmos/cosmos-sdk \
  && cd cosmos-sdk \
  && git checkout cosmovisor/$VERSION \
  && make cosmovisor \
@@ -22,9 +23,12 @@ RUN \
     ca-certificates \
     unzip \
     gzip \
+    gettext-base \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/bin/cosmovisor /usr/bin/cosmovisor
+COPY --from=builder /usr/bin/gt /usr/bin/gt
+COPY ./scripts/entrypoint.sh /entrypoint.sh
 
 ENTRYPOINT ["tini", "--"]
-CMD ["cosmovisor", "run"]
+CMD ["/entrypoint.sh"]
