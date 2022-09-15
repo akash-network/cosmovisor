@@ -9,6 +9,7 @@ echo "
 supported values to the CHAIN env variable
     - akash
     - sifchain
+    - rebus
 "
     exit 1
 }
@@ -20,6 +21,9 @@ case "${CHAIN}" in
     sifchain)
         chain_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/sifchain/chain.json
         ;;
+#     rebus)
+#         chain_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/rebus/chain.json
+#         ;;
     "")
         echo "CHAIN is not set"
         usage

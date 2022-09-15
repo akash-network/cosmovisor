@@ -1,17 +1,12 @@
 FROM golang as builder
 
-ARG VERSION=v1.2.0
+ARG VERSION=v1.3.0
 
 RUN \
     GOBIN=/usr/bin go install github.com/schwarzit/go-template/cmd/gt@latest \
- && git clone https://github.com/cosmos/cosmos-sdk \
- && cd cosmos-sdk \
- && git checkout cosmovisor/$VERSION \
- && make cosmovisor \
- && cp cosmovisor/cosmovisor /usr/bin/cosmovisor
+ && GOBIN=/usr/bin go install github.com/cosmos/cosmos-sdk/cosmovisor/cmd/cosmovisor@${VERSION}
 
 FROM debian:bullseye
-
 LABEL "org.opencontainers.image.source"="https://github.com/16psyche/cosmovisor"
 
 RUN \

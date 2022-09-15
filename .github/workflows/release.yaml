@@ -51,4 +51,4 @@ jobs:
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         build-args: |
-          VERSION=v1.2.0
+          VERSION=v1.3.0
