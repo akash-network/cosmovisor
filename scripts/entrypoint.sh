@@ -1,8 +1,36 @@
 #!/usr/bin/env bash
 
-#set -x
-set -e
-set -o pipefail
+set_x=${SHELL_SET_X:-false}
+set_e=${SHELL_SET_E:-true}
+set_u=${SHELL_SET_U:-true}
+
+chain_import_genesis=${CHAIN_IMPORT_GENESIS:-false}
+unset CHAIN_IMPORT_GENESIS
+
+set_pipefail=${SHELL_SET_PIPEFAIL:-true}
+
+if [[ ${set_x} == "true" ]]; then
+    set -x
+else
+    set +x
+fi
+
+if [[ ${set_e} == "true" ]]; then
+    set -e
+else
+    set +e
+fi
+
+if [[ ${set_pipefail} == "true" ]]; then
+    set -o pipefail
+fi
+
+err_report() {
+    echo "Error occurred:"
+    awk 'NR>L-4 && NR<L+4 { printf "%-5d%3s%s\n",NR,(NR==L?">>>":""),$0 }' L=$1 $0
+}
+
+trap 'err $LINENO' ERR
 
 function usage() {
 echo "
@@ -10,6 +38,7 @@ supported values to the CHAIN env variable
     - akash
     - sifchain
     - rebus
+    - stride
 "
     exit 1
 }
@@ -21,9 +50,12 @@ case "${CHAIN}" in
     sifchain)
         chain_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/sifchain/chain.json
         ;;
-#     rebus)
-#         chain_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/rebus/chain.json
-#         ;;
+    stride)
+        chain_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/stride/chain.json
+        ;;
+    rebus)
+        chain_url=https://raw.githubusercontent.com/rebuschain/chain-registry/feature/add-rebus-coin/rebus/chain.json
+        ;;
     "")
         echo "CHAIN is not set"
         usage
@@ -34,7 +66,11 @@ case "${CHAIN}" in
         ;;
 esac
 
-set -u
+if [[ ${set_u} == "true" ]]; then
+    set -u
+else
+    set +u
+fi
 
 chain_file=./chain.json
 
@@ -62,28 +98,76 @@ CHAIN_HOME=${CHAIN_HOME:-"$(jq -Mr '.node_home' "$chain_file")"}
 export CHAIN_HOME="$(echo "${CHAIN_HOME}" | envsubst)"
 export CHAIN_CHAIN_ID=$(jq -Mr '.chain_id' "$chain_file")
 
-echo "validating peers and seeds"
+if [[ ${chain_import_genesis} == "true" ]]; then
+    echo "importing chain genesis into $CHAIN_HOME"
+    genesis_url=$(cat "$chain_file" | jq -Mr '.genesis.genesis_url')
+    curl -L "$genesis_url" | bsdtar -xvf - -C "$CHAIN_HOME/"
+fi
 
-env | grep -q "^CHAIN_P2P_SEEDS" || declare CHAIN_P2P_SEEDS="$(cat "$chain_file" | jq -Mr '.peers.seeds[] | [.id, .address|gsub(":"; " ")] | @tsv' | while read id ip port; do timeout 2s nc -vz $ip $port >/dev/null 2>&1 && echo ${id}@${ip}:${port}; done | paste -sd, -)"
-env | grep -q "^CHAIN_P2P_PERSISTENT_PEERS" || declare CHAIN_P2P_PERSISTENT_PEERS=$(cat "$chain_file" | jq -Mr '.peers.persistent_peers[] | [.id, .address|gsub(":"; " ")] | @tsv' | while read id ip port; do timeout 2s nc -vz $ip $port >/dev/null 2>&1 && echo ${id}@${ip}:${port}; done | paste -sd, -)
+if ! env | grep -q "^CHAIN_P2P_SEEDS" ; then
+    if ! cat "$chain_file" | jq -Mr '.peers.seeds[]' &> /dev/null ; then
+        echo "chain file does not contain seeds"
+    else
+        echo "validating seeds"
+
+        seeds=
+        while read id ip port; do
+            echo "validating seed: ${id}@${ip}:${port}"
+            if timeout 2s nc -vz $ip $port >/dev/null 2>&1 ; then
+                echo "    PASS"
+                [[ "$seeds" == "" ]] && seeds=${id}@${ip}:${port} || seeds="$seeds,${id}@${ip}:${port}"
+            else
+                echo "    FAIL"
+            fi
+        done <<< $(cat "$chain_file" | jq -Mr '.peers.seeds[] | [.id, .address|gsub(":"; " ")] | @tsv')
+        declare CHAIN_P2P_SEEDS="$seeds"
+    fi
+else
+    echo "CHAIN_P2P_SEEDS is set explicitly. ignoring chain seeds"
+fi
+
+if ! env | grep -q "^CHAIN_P2P_PERSISTENT_PEERS" ; then
+    if ! cat "$chain_file" | jq -Mr '.peers.persistent_peers[]' &> /dev/null ; then
+        echo "chain file does not contain persistent peers"
+    else
+        echo "validating peers"
+
+        peers=
+        while read id ip port; do
+            echo "validating persistent peer: ${id}@${ip}:${port}"
+            if timeout 2s nc -vz $ip $port >/dev/null 2>&1 ; then
+                echo "    PASS"
+                [[ "$peers" == "" ]] && peers=${id}@${ip}:${port} || peers="$peers,${id}@${ip}:${port}"
+            else
+                echo "    FAIL"
+            fi
+        done <<< $(cat "$chain_file" | jq -Mr '.peers.persistent_peers[] | [.id, .address|gsub(":"; " ")] | @tsv')
+        declare CHAIN_P2P_PERSISTENT_PEERS="$peers"
+    fi
+else
+    echo "CHAIN_P2P_PERSISTENT_PEERS is set explicitly. ignoring chain persistent peers"
+fi
 
 set +u
 if [[ ! -z ${ADDITIONAL_P2P_SEEDS+x} ]]; then
-    peers=${CHAIN_P2P_SEEDS}
-    declare CHAIN_P2P_SEEDS=${ADDITIONAL_P2P_SEEDS}
-
-    if [[ ${peers} != "" ]]; then
-        declare CHAIN_P2P_SEEDS="${CHAIN_P2P_SEEDS},${peers}"
+    echo "applying additional seeds"
+    if [[ "${CHAIN_P2P_SEEDS}" == "" ]]; then
+        CHAIN_P2P_SEEDS=${ADDITIONAL_P2P_SEEDS}
+    else
+        CHAIN_P2P_SEEDS="${CHAIN_P2P_SEEDS},${ADDITIONAL_P2P_SEEDS}"
     fi
+    declare CHAIN_P2P_SEEDS
 fi
 
 if [[ ! -z ${ADDITIONAL_P2P_PERSISTENT_PEERS+x} ]]; then
-    peers=${CHAIN_P2P_PERSISTENT_PEERS}
-    declare CHAIN_P2P_PERSISTENT_PEERS=${ADDITIONAL_P2P_PERSISTENT_PEERS}
-
-    if [[ ${peers} != "" ]]; then
-        declare CHAIN_P2P_PERSISTENT_PEERS="${CHAIN_P2P_PERSISTENT_PEERS},${peers}"
+    echo "applying additional persistent peers"
+    if [[ "${CHAIN_P2P_PERSISTENT_PEERS}" == "" ]]; then
+        CHAIN_P2P_PERSISTENT_PEERS=${ADDITIONAL_P2P_PERSISTENT_PEERS}
+    else
+        CHAIN_P2P_PERSISTENT_PEERS="${CHAIN_P2P_PERSISTENT_PEERS},${ADDITIONAL_P2P_PERSISTENT_PEERS}"
     fi
+    declare CHAIN_P2P_PERSISTENT_PEERS
+
 fi
 set -u
 
@@ -114,14 +198,16 @@ if [ ${CHAIN_STATESYNC_ENABLE} == true ]; then
 
     unset CHAIN_STATESYNC_RPC_SERVERS
 
-    LATEST_HEIGHT=$(curl -s ${rpc_array[0]}/block | jq -r .result.block.header.height)
-    BLOCK_HEIGHT=$((LATEST_HEIGHT - 2000))
-    TRUST_HASH=$(curl -s "${rpc_array[0]}/block?height=${BLOCK_HEIGHT}" | jq -r .result.block_id.hash)
+    height_diff=${BLOCK_HEIGHT_DIFF:-2000}
+
+    LATEST_HEIGHT=$(curl -sL ${rpc_array[0]}/block | jq -r .result.block.header.height)
+    BLOCK_HEIGHT=$((LATEST_HEIGHT - height_diff))
+    TRUST_HASH=$(curl -sL "${rpc_array[0]}/block?height=${BLOCK_HEIGHT}" | jq -r .result.block_id.hash)
 
     CHAIN_STATESYNC_RPC_SERVERS=${rpc_array[0]}
 
     for (( i=1; i<${#rpc_array[@]}; i++ )); do
-        test_hash=$(curl -s "${rpc_array[i]}/block?height=${BLOCK_HEIGHT}" | jq -r .result.block_id.hash)
+        test_hash=$(curl -sL "${rpc_array[i]}/block?height=${BLOCK_HEIGHT}" | jq -r .result.block_id.hash)
         if [[ $TRUST_HASH != $test_hash ]]; then
             echo "TRUST hash for block $BLOCK_HEIGHT does not match
     ${rpc_array[0]} : $TRUST_HASH
@@ -147,9 +233,29 @@ while IFS="=" read var val; do
     export ${varname}
 done <<< $(env | grep ^"CHAIN_")
 
+if [[ ! -z ${ADDITIONAL_P2P_PERSISTENT_PEERS+x} ]]; then
+    peers=${CHAIN_P2P_PERSISTENT_PEERS}
+    declare CHAIN_P2P_PERSISTENT_PEERS=${ADDITIONAL_P2P_PERSISTENT_PEERS}
+
+    if [[ ${peers} != "" ]]; then
+        declare CHAIN_P2P_PERSISTENT_PEERS="${CHAIN_P2P_PERSISTENT_PEERS},${peers}"
+    fi
+fi
+
+set +u
+if [[ ! -z ${DAEMON_UNSAFE_SKIP_BACKUP} ]]; then
+    declare UNSAFE_SKIP_BACKUP=${DAEMON_UNSAFE_SKIP_BACKUP}
+    unset $DAEMON_UNSAFE_SKIP_BACKUP
+fi
+set -u
+
+export UNSAFE_SKIP_BACKUP
 export DAEMON_NAME
 export DAEMON_HOME
 
 env | sort | grep -q "^CHAIN_" && echo "some env variable starting with CHAIN_ has not been unset" && exit 1
 env | sort | grep "^${ENV_PREFIX}\|^DAEMON_\|^CHAIN_"
-exec cosmovisor run start |& grep -vi 'peer'
+
+[[ -f /boot/prerun.sh ]] && /boot/prerun.sh
+
+# exec cosmovisor run start |& grep -vi 'peer'
