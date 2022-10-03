@@ -1,0 +1,43 @@
+version: '3'
+services:
+  rpc:
+    image: ghcr.io/16psyche/cosmovisor:v1.3.0
+    restart: always
+    env_file: .env
+    environment:
+      # do not gossip validator's node id
+      CHAIN_P2P_PRIVATE_PEER_IDS: a2435fc8253647ac112cb3c21fa18ec6ff31f876
+      ADDITIONAL_P2P_PERSISTENT_PEERS: a2435fc8253647ac112cb3c21fa18ec6ff31f876@validator:26656
+    ports:
+      - 26656:26656
+      - 26657:26657
+    volumes:
+      - rpc:/root/.chain
+      - ./rpc/node_key.json:/root/.chain/config/node_key.json:ro
+      - ./rpc/priv_validator_key.json:/root/.chain/config/priv_validator_key.json:ro
+    networks:
+      backend: {}
+  validator:
+    image: ghcr.io/16psyche/cosmovisor:v1.3.0
+    restart: always
+    env_file: .env
+    environment:
+
+      CONFIG_RESET_DATA: true
+      CHAIN_PRUNNING: everything
+      CHAIN_P2P_PEX: false
+      CHAIN_P2P_SEEDS: ""
+      CHAIN_P2P_PERSISTENT_PEERS: 0edf5fb90569216e143fbdc441cd4fb628a19537@rpc:26656
+    volumes:
+      - validator:/root/.chain
+      - ./validator/node_key.json:/root/.chain/config/node_key.json:ro
+      - ./validator/priv_validator_key.json:/root/.chain/config/priv_validator_key.json:ro
+    networks:
+      backend: {}
+volumes:
+  rpc:
+  validator:
+
+networks:
+  backend:
+    driver: bridge
