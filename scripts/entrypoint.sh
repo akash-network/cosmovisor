@@ -147,12 +147,6 @@ if [ ! -f "$CHAIN_HOME/cosmovisor/current/bin/$DAEMON_NAME" ]; then
         git_repo=$(jq -Mr '.codebase.git_repo' "$chain_file")
         recommended_version=$(jq -Mr '.codebase.recommended_version' "$chain_file")
 
-        case "$chain" in
-        osmosis)
-            recommended_version=v$recommended_version
-            ;;
-        esac
-
         echo "installing chain recommended version of \"$DAEMON_NAME\", version: $recommended_version"
 
         pushd $(pwd)
