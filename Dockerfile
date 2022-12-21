@@ -43,11 +43,6 @@ RUN GOBIN=/usr/bin go install github.com/schwarzit/go-template/cmd/gt@latest
 
 RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@v${COSMOVISOR_VERSION}
 
-#RUN \
-#    git clone -b tools/cosmovisor/${COSMOVISOR_VERSION} --depth 1 https://github.com/cosmos/cosmos-sdk \
-# && cd cosmos-sdk/tools/cosmovisor/cmd/cosmovisor \
-# && GOBIN=/usr/bin go install
-
 RUN \
     git clone -b $GO_GETTER_VERSION --depth 1 https://github.com/hashicorp/go-getter \
  && cd go-getter/cmd/go-getter \
