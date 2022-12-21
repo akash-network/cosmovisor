@@ -28,6 +28,7 @@ RUN \
 
 FROM golang:${GO_VERSION}-bullseye as build
 
+ARG GO_VERSION
 ARG GO_GETTER_VERSION
 ARG COSMOVISOR_VERSION
 
@@ -43,6 +44,7 @@ RUN \
 FROM base
 LABEL "org.opencontainers.image.source"="https://github.com/16psyche/cosmovisor"
 
+ARG GO_VERSION
 ENV GO_VERSION=$GO_VERSION
 
 COPY --from=build /usr/bin/cosmovisor /usr/bin
