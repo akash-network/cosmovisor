@@ -4,9 +4,6 @@ FROM golang:${GOLANG_VERSION}-bullseye AS base
 
 ENV LANG="en_US.UTF-8"
 ARG TARGETARCH
-ARG GO_GETTER_VERSION=v2.1.1
-ARG VERSION=v1.4.0
-
 RUN \
     apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -36,6 +33,8 @@ RUN \
 #ENV PATH=$PATH:/usr/local/go/bin
 
 FROM base AS build
+ARG GO_GETTER_VERSION=v2.1.1
+ARG VERSION=v1.4.0
 
 SHELL ["/bin/bash", "-c"]
 
@@ -43,7 +42,6 @@ RUN GOBIN=/usr/bin go install github.com/schwarzit/go-template/cmd/gt@latest
 RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@${VERSION}
 RUN \
     git clone -b $GO_GETTER_VERSION --depth 1 https://github.com/hashicorp/go-getter \
- && pushd "$(pwd)" \
  && cd go-getter/cmd/go-getter \
  && GOBIN=/usr/bin go install
 
