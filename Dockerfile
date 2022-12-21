@@ -1,6 +1,6 @@
 ARG GOLANG_VERSION=1.19.2
 
-FROM golang:${GOLANG_VERSION}-bullseye AS base
+FROM debian:bullseye AS base
 
 ENV LANG="en_US.UTF-8"
 ARG TARGETARCH
@@ -22,17 +22,11 @@ RUN \
     pv \
     lz4 \
  && rm -rf /var/lib/apt/lists/* \
- && wget -qO- https://go.dev/dl/go$GOLANG_VERSION.linux-$TARGETARCH.tar.gz | tar -C /usr/local -xzf - \
- && export AWS_ARCH=$(echo $TARGETARCH | sed -e "s/amd64/x86_64/g" -e "s/arm64/aarch64/g") \
- && curl "https://awscli.amazonaws.com/awscli-exe-linux-$AWS_ARCH.zip" -o "awscliv2.zip" \
- && unzip awscliv2.zip \
- && ./aws/install \
- && rm -rf awscliv2.zip \
- && git config --global advice.detachedHead "false"
+ && git config --global advice.detachedHead "false" \
+ && curl https://dl.min.io/client/mc/release/linux-$TARGETARCH/mc -o /usr/bin/mc \
+ && chmod +x /usr/bin/mc
 
-#ENV PATH=$PATH:/usr/local/go/bin
-
-FROM base AS build
+FROM golang:${GOLANG_VERSION}-bullseye as build
 ARG GO_GETTER_VERSION=v2.1.1
 ARG VERSION=v1.4.0
 
@@ -47,6 +41,8 @@ RUN \
 
 FROM base
 LABEL "org.opencontainers.image.source"="https://github.com/16psyche/cosmovisor"
+
+ENV GOLANG_VERSION=$GOLANG_VERSION
 
 COPY --from=build /usr/bin/cosmovisor /usr/bin
 COPY --from=build /usr/bin/gt /usr/bin

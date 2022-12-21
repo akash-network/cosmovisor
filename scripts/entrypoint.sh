@@ -21,9 +21,10 @@ snapshot_dl=false
 
 CONFIG_WASM_PATH=${CONFIG_WASM_PATH:-wasm}
 
-export AWS_ACCESS_KEY_ID=${CONFIG_S3_KEY:-}
-export AWS_SECRET_ACCESS_KEY=${CONFIG_S3_SECRET:-}
+CONFIG_S3_KEY=${CONFIG_S3_KEY:-}
+CONFIG_S3_SECRET=${CONFIG_S3_SECRET:-}
 CONFIG_S3_ENDPOINT="${CONFIG_S3_ENDPOINT:-https://s3.filebase.com}"
+CONFIG_S3_PATH=${CONFIG_S3_PATH:-}
 CONFIG_GPG_KEY_PASSWORD="${CONFIG_GPG_KEY_PASSWORD:-}"
 
 unset CONFIG_IMPORT_GENESIS
@@ -37,6 +38,15 @@ UNSAFE_SKIP_BACKUP=${UNSAFE_SKIP_BACKUP:-false}
 CHAIN_STATESYNC_ENABLE=${CHAIN_STATESYNC_ENABLE:-false}
 CHAIN_STATESYNC_RPC_SERVERS=${CHAIN_STATESYNC_RPC_SERVERS:-}
 
+GO_VERSION=${GO_VERSION:-"1.19.2"}
+
+if [[ -n $CONFIG_S3_ENDPOINT ]]; then
+    echo "setting up s3 alias"
+
+    # shellcheck disable=SC2086
+    mc alias set s3 $CONFIG_S3_ENDPOINT $CONFIG_S3_KEY $CONFIG_S3_SECRET
+fi
+
 function blank_data() {
     mkdir -p "$CHAIN_HOME"/data
     echo "{\"height\":\"0\",\"round\": 0,\"step\": 0}" >"$CHAIN_HOME/data/priv_validator_state.json"
@@ -49,13 +59,10 @@ restore_key() {
         file+=".gpg"
     fi
 
-    local s3_uri_base="s3://$CONFIG_S3_PATH"
-    local aws_args="--endpoint-url ${CONFIG_S3_ENDPOINT}"
-
     # shellcheck disable=SC2086
-    if aws $aws_args s3 ls "${s3_uri_base}/$file" >/dev/null 2>&1 ; then
+    if mc ls s3/${CONFIG_S3_PATH}/$file >/dev/null 2>&1 ; then
         echo "restoring $file"
-        aws $aws_args s3 cp "${s3_uri_base}/$file" "$2/$file"
+        mc cp s3/${CONFIG_S3_PATH}/$file "$2/$file"
 
         if [[ $file == *.gpg ]]; then
             echo "decrypting $file"
@@ -65,6 +72,16 @@ restore_key() {
     else
         echo "$1 backup not found"
     fi
+}
+
+function content_size() {
+    size_in_bytes=$(wget "$1" --spider --server-response -O - 2>&1 | sed -ne '/Content-Length/{s/.*: //;p}')
+    case "$size_in_bytes" in
+        # Value cannot be started with `0`, and must be integer
+    [1-9]*[0-9])
+        echo "$size_in_bytes"
+        ;;
+    esac
 }
 
 if [[ ${set_x} == "true" ]]; then
@@ -189,7 +206,7 @@ unset CHAIN_ID
 chain_genesis_file="$CHAIN_HOME/config/genesis.json"
 chain_config_dir="$CHAIN_HOME/config"
 chain_config="$chain_config_dir/config.toml"
-chain_app_config="$chain_config_dir/app.toml"
+#chain_app_config="$chain_config_dir/app.toml"
 
 cosmovisor_genesis="$CHAIN_HOME/cosmovisor/genesis"
 cosmovisor_current="$CHAIN_HOME/cosmovisor/current"
@@ -222,6 +239,22 @@ if [ ! -f "$cosmovisor_current_bin/$DAEMON_NAME" ]; then
         go-getter -progress -mode=file "${binary_url}" "${binary_path}/${DAEMON_NAME}"
     elif [[ $try_compile == true ]]; then
         echo "trying to compile binary for linux/$uname_arch"
+
+        if ! command -v go &> /dev/null ; then
+            echo "go has not been found. installing go$GO_VERSION"
+            go_url="https://go.dev/dl/go${GO_VERSION}.linux-${uname_arch}.tar.gz"
+
+            pv_args="-petrafb"
+            sz=$(content_size "$go_url")
+            if [[ -n $sz ]]; then
+                pv_args+=" -s $sz"
+            fi
+
+            # shellcheck disable=SC2086
+            (wget -qO- "$go_url" | pv $pv_args | tar -C /usr/local -xzf -) 2>&1 | stdbuf -o0 tr '\r' '\n'
+
+            export PATH=$PATH:/usr/local/go/bin
+        fi
 
         git_repo=$(jq -Mr '.codebase.git_repo' "$chain_metadata")
         recommended_version=$(jq -Mr '.codebase.recommended_version' "$chain_metadata")
@@ -422,30 +455,33 @@ if [ "${CHAIN_STATESYNC_ENABLE}" == true ]; then
 fi
 
 # Overwrite seeds in config.toml for chains that are not using the env variable correctly
-if [ "$overwrite_seeds" == "true" ] && [ "$CHAIN_P2P_SEEDS" ]; then
+if [ "$overwrite_seeds" == "true" ] && [ -n "$CHAIN_P2P_SEEDS" ]; then
     echo "overwriting seeds"
     sed -i "s/seeds = \"\"/seeds = \"$CHAIN_P2P_SEEDS\"/" "$chain_config"
 fi
 
 # Snapshot
 if [ "$snapshot_dl" == "true" ]; then
-    if [ -n "${CONFIG_SNAPSHOT_URL}" ]; then
-        echo "Downloading snapshot from $CONFIG_SNAPSHOT_URL..."
+    if [ -n "${snapshot_url}" ]; then
+        echo "Downloading snapshot from $snapshot_url..."
         rm -rf "$data_dir"
         pushd "$(pwd)"
         cd "$CHAIN_HOME"
 
-        #        go-getter -progress "$CONFIG_SNAPSHOT_URL" "$CHAIN_HOME/data"
         # Detect content size via HTTP header `Content-Length`
         # Note that the server can refuse to return `Content-Length`, or the URL can be incorrect
         pv_args="-petrafb -i 5"
-        snapshot_size_in_bytes=$(wget "$snapshot_url" --spider --server-response -O - 2>&1 | sed -ne '/Content-Length/{s/.*: //;p}')
-        case "$snapshot_size_in_bytes" in
-            # Value cannot be started with `0`, and must be integer
-            [1-9]*[0-9])
-                pv_args+=" -s $snapshot_size_in_bytes"
-                ;;
-        esac
+        sz=$(content_size "$snapshot_url")
+        if [[ -n $sz ]]; then
+            pv_args+=" -s $sz"
+        fi
+#        snapshot_size_in_bytes=$(wget "$snapshot_url" --spider --server-response -O - 2>&1 | sed -ne '/Content-Length/{s/.*: //;p}')
+#        case "$snapshot_size_in_bytes" in
+#            # Value cannot be started with `0`, and must be integer
+#            [1-9]*[0-9])
+#                pv_args+=" -s $snapshot_size_in_bytes"
+#                ;;
+#        esac
 
         case "${snapshot_url,,}" in
             *.tar.cz)
