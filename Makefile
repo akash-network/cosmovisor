@@ -24,7 +24,7 @@ cosmovisor-%:
 	@echo "building $(IMAGE_NAME)-$(@:cosmovisor-%=%)"
 	$(DOCKER_BUILD) --platform=linux/$(@:cosmovisor-%=%) -t $(IMAGE_NAME)-$(@:cosmovisor-%=%) \
 		--build-arg GO_VERSION=$(GO_VERSION) \
-		--build-arg COSMOVISOR_VERSION=v$(COSMOVISOR_VERSION) \
+		--build-arg COSMOVISOR_VERSION=$(COSMOVISOR_VERSION) \
 		--build-arg GO_GETTER_VERSION=$(GO_GETTER_VERSION) \
 		-f Dockerfile .
 
