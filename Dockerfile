@@ -1,9 +1,9 @@
-ARG GOLANG_VERSION=1.19.2
+ARG GO_VERSION
+ARG TARGETARCH
 
 FROM debian:bullseye AS base
 
 ENV LANG="en_US.UTF-8"
-ARG TARGETARCH
 RUN \
     apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -26,14 +26,15 @@ RUN \
  && curl https://dl.min.io/client/mc/release/linux-$TARGETARCH/mc -o /usr/bin/mc \
  && chmod +x /usr/bin/mc
 
-FROM golang:${GOLANG_VERSION}-bullseye as build
-ARG GO_GETTER_VERSION=v2.1.1
-ARG VERSION=v1.4.0
+FROM golang:${GO_VERSION}-bullseye as build
+
+ARG GO_GETTER_VERSION
+ARG COSMOVISOR_VERSION
 
 SHELL ["/bin/bash", "-c"]
 
 RUN GOBIN=/usr/bin go install github.com/schwarzit/go-template/cmd/gt@latest
-RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@${VERSION}
+RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@${COSMOVISOR_VERSION}
 RUN \
     git clone -b $GO_GETTER_VERSION --depth 1 https://github.com/hashicorp/go-getter \
  && cd go-getter/cmd/go-getter \
@@ -42,7 +43,7 @@ RUN \
 FROM base
 LABEL "org.opencontainers.image.source"="https://github.com/16psyche/cosmovisor"
 
-ENV GOLANG_VERSION=$GOLANG_VERSION
+ENV GO_VERSION=$GO_VERSION
 
 COPY --from=build /usr/bin/cosmovisor /usr/bin
 COPY --from=build /usr/bin/gt /usr/bin
