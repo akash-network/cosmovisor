@@ -11,13 +11,26 @@ unset SHELL_SET_PIPEFAIL
 
 import_genesis=${CONFIG_FORCE_IMPORT_GENESIS:-false}
 reset_data=${CONFIG_RESET_DATA:-false}
-download_binary=${CONFIG_DOWNLOAD_RECOMMENDED_BINARY:-false}
-peer_validation=${CONFIG_PEER_VALIDATION:-true}
+binary_url=${CONFIG_BINARY_URL:-}
+try_compile=${CONFIG_TRY_COMPILE_BINARY:-false}
+addrbook_url=${CONFIG_ADDRBOOK_URL:-}
+peer_validation=${CONFIG_PEER_VALIDATION:-false}
+overwrite_seeds=${CONFIG_OVERWRITE_SEEDS:-false}
+snapshot_url=${CONFIG_SNAPSHOT_URL:-}
+snapshot_dl=false
+
+CONFIG_WASM_PATH=${CONFIG_WASM_PATH:-wasm}
+
+export AWS_ACCESS_KEY_ID=${CONFIG_S3_KEY:-}
+export AWS_SECRET_ACCESS_KEY=${CONFIG_S3_SECRET:-}
+CONFIG_S3_ENDPOINT="${CONFIG_S3_ENDPOINT:-https://s3.filebase.com}"
+CONFIG_GPG_KEY_PASSWORD="${CONFIG_GPG_KEY_PASSWORD:-}"
 
 unset CONFIG_IMPORT_GENESIS
 unset CONFIG_UNSAFE_RESET_ALL
 unset CONFIG_DOWNLOAD_RECOMMENDED_BINARY
 unset CONFIG_PEER_VALIDATION
+unset CHAIN_INIT
 
 UNSAFE_SKIP_BACKUP=${UNSAFE_SKIP_BACKUP:-false}
 
@@ -25,8 +38,33 @@ CHAIN_STATESYNC_ENABLE=${CHAIN_STATESYNC_ENABLE:-false}
 CHAIN_STATESYNC_RPC_SERVERS=${CHAIN_STATESYNC_RPC_SERVERS:-}
 
 function blank_data() {
-    mkdir -p $CHAIN_HOME/data
-    echo "{\"height\":\"0\",\"round\": 0,\"step\": 0}" > "$CHAIN_HOME/data/priv_validator_state.json"
+    mkdir -p "$CHAIN_HOME"/data
+    echo "{\"height\":\"0\",\"round\": 0,\"step\": 0}" >"$CHAIN_HOME/data/priv_validator_state.json"
+}
+
+restore_key() {
+    local file="$1"
+
+    if [ -n "$CONFIG_GPG_KEY_PASSWORD" ]; then
+        file+=".gpg"
+    fi
+
+    local s3_uri_base="s3://$CONFIG_S3_PATH"
+    local aws_args="--endpoint-url ${CONFIG_S3_ENDPOINT}"
+
+    # shellcheck disable=SC2086
+    if aws $aws_args s3 ls "${s3_uri_base}/$file" >/dev/null 2>&1 ; then
+        echo "restoring $file"
+        aws $aws_args s3 cp "${s3_uri_base}/$file" "$2/$file"
+
+        if [[ $file == *.gpg ]]; then
+            echo "decrypting $file"
+            echo "$CONFIG_GPG_KEY_PASSWORD" | gpg --decrypt --batch --passphrase-fd 0 "$2/$file" >"$2/$1"
+            rm "$2/$file"
+        fi
+    else
+        echo "$1 backup not found"
+    fi
 }
 
 if [[ ${set_x} == "true" ]]; then
@@ -48,12 +86,13 @@ fi
 trap 'echo >&2 "Error - exited with status $? at line $LINENO:"; pr -tn $0 | tail -n+$((LINENO - 3)) | head -n7 >&2' ERR
 
 function usage() {
-echo "
+    echo "
 supported values to the CHAIN env variable
     - akash
     - sifchain
     - rebus
     - stride
+    - osmosis
 "
     exit 1
 }
@@ -63,9 +102,10 @@ if [[ ${CHAIN_STATESYNC_ENABLE} == true && -z ${CHAIN_STATESYNC_RPC_SERVERS} ]];
     exit 1
 fi
 
-config_url=${CONFIG_URL:-}
+config_url=${CHAIN_JSON:-}
 
-if [[ ! -n $config_url ]]; then
+if [[ -z $config_url ]]; then
+    # shellcheck disable=SC2153
     case "${CHAIN}" in
         akash)
             config_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/akash/chain.json
@@ -94,6 +134,7 @@ if [[ ! -n $config_url ]]; then
 fi
 
 unset CHAIN
+unset CHAIN_JSON
 
 if [[ ${set_u} == "true" ]]; then
     set -u
@@ -101,16 +142,22 @@ else
     set +u
 fi
 
-chain_file=./chain.json
+tmpfile() {
+    mktemp "/tmp/$(basename "$0").XXXXXX"
+}
 
-curl -sSfl "$config_url" > "$chain_file"
+chain_metadata=$(tmpfile)
 
-chain="$(jq -Mr '.chain_name' "$chain_file")"
+trap 'rm -f $chain_metadata' EXIT
+
+curl -sSfl "$config_url" >"$chain_metadata"
+
+chain="$(jq -Mr '.chain_name' "$chain_metadata")"
 echo "fetching chain info for $chain"
 
-DAEMON_NAME="$(jq -Mr '.daemon_name' "$chain_file")"
+DAEMON_NAME="$(jq -Mr '.daemon_name' "$chain_metadata")"
 
-ENV_PREFIX=${CONFIG_ENV_PREFIX:-"$(echo -n ${DAEMON_NAME}_ | tr '[:lower:]' '[:upper:]')"}
+ENV_PREFIX=${CONFIG_ENV_PREFIX:-"$(echo -n "${DAEMON_NAME}"_ | tr '[:lower:]' '[:upper:]')"}
 unset CONFIG_ENV_PREFIX
 
 if [[ ${ENV_PREFIX: -1} != "_" ]]; then
@@ -126,114 +173,140 @@ function echo_dval() {
     echo "${!1}"
 }
 
-CHAIN_HOME=${CHAIN_HOME:-"$(jq -Mr '.node_home' "$chain_file")"}
+CHAIN_HOME=${CHAIN_HOME:-"$(jq -Mr '.node_home' "$chain_metadata")"}
+# "or" condition after the head command is to filter out SIGPIPE error code
+# shellcheck disable=SC2002
+CHAIN_MONIKER=${CHAIN_MONIKER:-$(cat /dev/urandom | tr -dc '[:alpha:]' | fold -w "${1:-20}" | head -n 1 || (
+    ec=$?
+    if [ "$ec" -eq 141 ]; then exit 0; else exit "$ec"; fi
+))}
 
 # if default path is in use it will be in format $HOME/.<daemon_name> so env needs to be evaluated
 CHAIN_HOME="$(echo "${CHAIN_HOME}" | envsubst)"
-CHAIN_CHAIN_ID=$(jq -Mr '.chain_id' "$chain_file")
+CHAIN_CHAIN_ID=${CHAIN_ID:-$(jq -Mr '.chain_id' "$chain_metadata")}
+unset CHAIN_ID
+
+chain_genesis_file="$CHAIN_HOME/config/genesis.json"
+chain_config_dir="$CHAIN_HOME/config"
+chain_config="$chain_config_dir/config.toml"
+chain_app_config="$chain_config_dir/app.toml"
+
+cosmovisor_genesis="$CHAIN_HOME/cosmovisor/genesis"
+cosmovisor_current="$CHAIN_HOME/cosmovisor/current"
+cosmovisor_current_bin="$cosmovisor_current/bin"
+
+data_dir="${CHAIN_HOME}/data"
+wasm_dir="${CHAIN_HOME}/${CONFIG_WASM_PATH}"
 
 [[ -f /boot/prerun1.sh ]] && /boot/prerun1.sh
 
-if [[ ! -f "$CHAIN_HOME/cosmovisor/genesis/bin/$DAEMON_NAME" ]]; then
-    mkdir -p "$CHAIN_HOME/cosmovisor/genesis/bin"
+if [[ ! -f "$cosmovisor_genesis/bin/$DAEMON_NAME" ]]; then
+    mkdir -p "$cosmovisor_genesis/bin"
 fi
 
-if [[ ! -e "$CHAIN_HOME/cosmovisor/current" ]]; then
-    ln -snf "$CHAIN_HOME/cosmovisor/genesis" "$CHAIN_HOME/cosmovisor/current"
+if [[ ! -e "$cosmovisor_current" ]]; then
+    ln -snf "$cosmovisor_genesis" "$cosmovisor_current"
 fi
 
-if [ ! -f "$CHAIN_HOME/cosmovisor/current/bin/$DAEMON_NAME" ]; then
-    if [[ ${download_binary} == "true" ]]; then
-        git_repo=$(jq -Mr '.codebase.git_repo' "$chain_file")
-        recommended_version=$(jq -Mr '.codebase.recommended_version' "$chain_file")
+if [ ! -f "$cosmovisor_current_bin/$DAEMON_NAME" ]; then
+    binary_path=$(readlink -f "${cosmovisor_current_bin}")
+    uname_arch=$(uname -m | sed -e "s/x86_64/amd64/g" -e "s/aarch64/arm64/g")
 
-        echo "installing chain recommended version of \"$DAEMON_NAME\", version: $recommended_version"
+    if [[ -z "$binary_url" ]]; then
+        echo "CONFIG_BINARY_URL is empty. trying to find recommended binary in the chain metadata"
+        binary_url=$(jq --arg mach "linux/$uname_arch" -Mr '.codebase.binaries | select(.[$mach] != null) | .[$mach]' "$chain_metadata")
+    fi
 
-        pushd $(pwd)
+    if [[ -n "$binary_url" ]]; then
+        echo "downloading binary ${DAEMON_NAME} from $binary_url"
+        go-getter -progress -mode=file "${binary_url}" "${binary_path}/${DAEMON_NAME}"
+    elif [[ $try_compile == true ]]; then
+        echo "trying to compile binary for linux/$uname_arch"
+
+        git_repo=$(jq -Mr '.codebase.git_repo' "$chain_metadata")
+        recommended_version=$(jq -Mr '.codebase.recommended_version' "$chain_metadata")
+        pushd "$(pwd)"
         mkdir src && cd src
         git config --global advice.detachedHead false
-        git clone --branch $recommended_version --depth 1 $git_repo .
+        git clone --branch "${recommended_version}" --depth 1 "${git_repo}" .
 
-        if [[ -d /config/patches/$DAEMON_NAME/$recommended_version ]]; then
-            for patch in /config/patches/$DAEMON_NAME/$recommended_version/* ; do
-                git apply $patch
+        if [[ -d /config/patches/${DAEMON_NAME}/${recommended_version} ]]; then
+            for patch in /config/patches/"${DAEMON_NAME}"/"${recommended_version}"/*; do
+                git apply "$patch"
             done
         fi
 
-        GOBIN=$(readlink -f "$CHAIN_HOME/cosmovisor/current/bin") make install
-        unset GOBIN
+        GOBIN=${binary_path} make install
 
         popd
         rm -rf src
     else
-        echo "daemon file "$CHAIN_HOME/cosmovisor/genesis/bin/$DAEMON_NAME" cannot be found."
-        echo "set CONFIG_DOWNLOAD_RECOMMENDED_BINARY, or download and install appropriate release into $CHAIN_HOME/cosmovisor/genesis/bin"
+        echo "unable to find precompiled binary for linux/$uname_arch"
+        echo "set CONFIG_BINARY_URL"
+
         exit 1
     fi
+
+    chmod +x "${cosmovisor_current_bin}/${DAEMON_NAME}"
 fi
 
-if [ ! -f "$CHAIN_HOME/config/config.toml" ]; then
+current_binary=$(readlink -f "${cosmovisor_current_bin}/${DAEMON_NAME}")
+
+if [ ! -f "$chain_config" ]; then
     echo "initializing chain home dir $CHAIN_HOME"
 
     blank_data
+    snapshot_dl=true
 
-    # "or" condition after the head command is to filter out SIGPIPE error code
-    CHAIN_MONIKER=${CHAIN_MONIKER:-$(cat /dev/urandom | tr -dc '[:alpha:]' | fold -w ${1:-20} | head -n 1 || (ec=$? ; if [ "$ec" -eq 141 ]; then exit 0; else exit "$ec"; fi))}
-    $CHAIN_HOME/cosmovisor/current/bin/$DAEMON_NAME init $CHAIN_MONIKER --home "$CHAIN_HOME" --chain-id="$CHAIN_CHAIN_ID"
+    "${current_binary}" init "${CHAIN_MONIKER}" --home "${CHAIN_HOME}" --chain-id="${CHAIN_CHAIN_ID}"
+
     import_genesis=true
-elif [ ! -f "$CHAIN_HOME/config/genesis.json" ]; then
+
+    if [[ -n "$addrbook_url" ]]; then
+        echo "downloading addrbook from $addrbook_url"
+        go-getter -mod=file "$addrbook_url" "$chain_config_dir/addrbook.json"
+    fi
+elif [ ! -f "$chain_genesis_file" ]; then
     import_genesis=true
 fi
 
-if [[ ${import_genesis} == "true" ]]; then
-    echo "importing chain genesis into $CHAIN_HOME"
-    genesis_url=$(cat "$chain_file" | jq -Mr '.genesis.genesis_url')
+if [[ "${import_genesis}" == "true" ]]; then
+    # shellcheck disable=SC2002
+    genesis_url=$(cat "${chain_metadata}" | jq -Mr '.codebase.genesis.genesis_url')
     genesis_url=$(curl -kIsL -w "%{url_effective}" -o /dev/null "$genesis_url")
 
-    echo "genesis: $genesis_url"
-
-    case "$genesis_url" in
-    *.json)
-        curl -sfl "$genesis_url" > "$CHAIN_HOME/config/genesis.json"
-        ;;
-    *.zip)
-        curl -sL "$genesis_url" | bsdtar -xf - -C "$CHAIN_HOME/config/"
-        ;;
-    *.gz)
-        curl -sL "$genesis_url" | gzip -d > "$CHAIN_HOME/config/genesis.json"
-        ;;
-    *.tar.gz)
-        curl -sL "$genesis_url" | tar -xzf - -C "$CHAIN_HOME/config/"
-        ;;
-    *)
-        echo "unsupported genesis un-archive file format: $genesis_url"
-        usage
-        ;;
-    esac
+    rm -f "$chain_genesis_file"
+    echo "downloading chain genesis from ${genesis_url}"
+    go-getter -progress -mode=file "${genesis_url}" "$chain_genesis_file"
 fi
 
-if [[ ${reset_data} == "true" ]]; then
+if [[ "${reset_data}" == "true" ]]; then
     echo "cleaning data dir"
-    rm -rf $CHAIN_HOME/data/*
+    rm -rf "${data_dir}"
+    rm -rf "${wasm_dir}"
 
     blank_data
+    snapshot_dl=true
+elif [[ ! -d ${data_dir} ]]; then
+    snapshot_dl=true
 fi
 
-if ! env | grep -q "^CHAIN_P2P_SEEDS" ; then
-    if ! cat "$chain_file" | jq -Mr '.peers.seeds[]' &> /dev/null ; then
+if ! env | grep -q "^CHAIN_P2P_SEEDS"; then
+    # shellcheck disable=SC2002
+    if ! cat "${chain_metadata}" | jq -Mr '.peers.seeds[]' &>/dev/null; then
         echo "chain file does not contain seeds"
     else
-        if [[ $peer_validation == true ]]; then
+        if [[ "$peer_validation" == "true" ]]; then
             echo "validating seeds"
         else
             echo "skipping seeds validation"
         fi
 
         seeds=
-        while read id ip port; do
-            if [[ $peer_validation == true ]]; then
+        while read -r id ip port; do
+            if [[ "$peer_validation" == "true" ]]; then
                 echo "validating seed: ${id}@${ip}:${port}"
-                if timeout 1s nc -vz $ip $port >/dev/null 2>&1 ; then
+                if timeout 1s nc -vz "${ip}" "${port}" >/dev/null 2>&1; then
                     echo "    PASS"
                     [[ "$seeds" == "" ]] && seeds=${id}@${ip}:${port} || seeds="$seeds,${id}@${ip}:${port}"
                 else
@@ -242,28 +315,29 @@ if ! env | grep -q "^CHAIN_P2P_SEEDS" ; then
             else
                 [[ "$seeds" == "" ]] && seeds=${id}@${ip}:${port} || seeds="$seeds,${id}@${ip}:${port}"
             fi
-        done <<< $(cat "$chain_file" | jq -Mr '.peers.seeds[] | [.id, .address|gsub(":"; " ")] | @tsv')
+        done <<<"$(cat "$chain_metadata" | jq -Mr '.peers.seeds[] | [.id, .address|gsub(":"; " ")] | @tsv')"
         declare CHAIN_P2P_SEEDS="$seeds"
     fi
 else
     echo "CHAIN_P2P_SEEDS is set explicitly. ignoring chain seeds"
 fi
 
-if ! env | grep -q "^CHAIN_P2P_PERSISTENT_PEERS" ; then
-    if ! cat "$chain_file" | jq -Mr '.peers.persistent_peers[]' &> /dev/null ; then
+if ! env | grep -q "^CHAIN_P2P_PERSISTENT_PEERS"; then
+    # shellcheck disable=SC2002
+    if ! cat "${chain_metadata}" | jq -Mr '.peers.persistent_peers[]' &>/dev/null; then
         echo "chain file does not contain persistent peers"
     else
-        if [[ $peer_validation == true ]]; then
+        if [[ "$peer_validation" == "true" ]]; then
             echo "validating peers"
         else
             echo "skipping peers validation"
         fi
 
         peers=
-        while read id ip port; do
-            if [[ $peer_validation == true ]]; then
+        while read -r id ip port; do
+            if [[ "$peer_validation" == "true" ]]; then
                 echo "validating persistent peer: ${id}@${ip}:${port}"
-                if timeout 1s nc -vz $ip $port >/dev/null 2>&1 ; then
+                if timeout 1s nc -vz "${ip}" "${port}" >/dev/null 2>&1; then
                     echo "    PASS"
                     [[ "$peers" == "" ]] && peers=${id}@${ip}:${port} || peers="$peers,${id}@${ip}:${port}"
                 else
@@ -272,7 +346,7 @@ if ! env | grep -q "^CHAIN_P2P_PERSISTENT_PEERS" ; then
             else
                 [[ "$peers" == "" ]] && peers=${id}@${ip}:${port} || peers="$peers,${id}@${ip}:${port}"
             fi
-        done <<< $(cat "$chain_file" | jq -Mr '.peers.persistent_peers[] | [.id, .address|gsub(":"; " ")] | @tsv')
+        done <<<"$(cat "$chain_metadata" | jq -Mr '.peers.persistent_peers[] | [.id, .address|gsub(":"; " ")] | @tsv')"
         declare CHAIN_P2P_PERSISTENT_PEERS="$peers"
     fi
 else
@@ -280,7 +354,7 @@ else
 fi
 
 set +u
-if [[ ! -z ${ADDITIONAL_P2P_SEEDS+x} ]]; then
+if [[ -n ${ADDITIONAL_P2P_SEEDS+x} ]]; then
     echo "applying additional seeds"
     if [[ "${CHAIN_P2P_SEEDS}" == "" ]]; then
         CHAIN_P2P_SEEDS=${ADDITIONAL_P2P_SEEDS}
@@ -290,7 +364,7 @@ if [[ ! -z ${ADDITIONAL_P2P_SEEDS+x} ]]; then
     declare CHAIN_P2P_SEEDS
 fi
 
-if [[ ! -z ${ADDITIONAL_P2P_PERSISTENT_PEERS+x} ]]; then
+if [[ -n ${ADDITIONAL_P2P_PERSISTENT_PEERS+x} ]]; then
     echo "applying additional persistent peers"
     if [[ "${CHAIN_P2P_PERSISTENT_PEERS}" == "" ]]; then
         CHAIN_P2P_PERSISTENT_PEERS=${ADDITIONAL_P2P_PERSISTENT_PEERS}
@@ -308,31 +382,33 @@ unset ADDITIONAL_P2P_PERSISTENT_PEERS
 export CHAIN_P2P_SEEDS
 export CHAIN_P2P_PERSISTENT_PEERS
 
-if [ ${CHAIN_STATESYNC_ENABLE} == true ]; then
+if [ "${CHAIN_STATESYNC_ENABLE}" == true ]; then
     oIFS="$IFS"
     IFS=","
-    declare -a rpc_array=($CHAIN_STATESYNC_RPC_SERVERS)
+    # shellcheck disable=SC2206
+    declare -a rpc_array=(${CHAIN_STATESYNC_RPC_SERVERS})
     IFS="$oIFS"
     unset oIFS
 
-    [[ ${#rpc_array[@]} -eq 1 ]] && rpc_array+=($CHAIN_STATESYNC_RPC_SERVERS)
+    # shellcheck disable=SC2206
+    [[ ${#rpc_array[@]} -eq 1 ]] && rpc_array+=(${CHAIN_STATESYNC_RPC_SERVERS})
 
     unset CHAIN_STATESYNC_RPC_SERVERS
 
     height_diff=${BLOCK_HEIGHT_DIFF:-2000}
 
-    LATEST_HEIGHT=$(curl -sL ${rpc_array[0]}/block | jq -r .result.block.header.height)
+    LATEST_HEIGHT=$(curl -sL "${rpc_array[0]}/block" | jq -r .result.block.header.height)
     BLOCK_HEIGHT=$((LATEST_HEIGHT - height_diff))
     TRUST_HASH=$(curl -sL "${rpc_array[0]}/block?height=${BLOCK_HEIGHT}" | jq -r .result.block_id.hash)
 
     CHAIN_STATESYNC_RPC_SERVERS=${rpc_array[0]}
 
-    for (( i=1; i<${#rpc_array[@]}; i++ )); do
+    for ((i = 1; i < ${#rpc_array[@]}; i++)); do
         test_hash=$(curl -sL "${rpc_array[i]}/block?height=${BLOCK_HEIGHT}" | jq -r .result.block_id.hash)
-        if [[ $TRUST_HASH != $test_hash ]]; then
+        if [[ $TRUST_HASH != "${test_hash}" ]]; then
             echo "TRUST hash for block $BLOCK_HEIGHT does not match
-    ${rpc_array[0]} : $TRUST_HASH
-    ${rpc_array[i]} : $test_hash
+    ${rpc_array[0]} : ${TRUST_HASH}
+    ${rpc_array[i]} : ${test_hash}
 "
             exit 1
         fi
@@ -345,14 +421,75 @@ if [ ${CHAIN_STATESYNC_ENABLE} == true ]; then
     export CHAIN_STATESYNC_TRUST_HASH=${TRUST_HASH}
 fi
 
+# Overwrite seeds in config.toml for chains that are not using the env variable correctly
+if [ "$overwrite_seeds" == "true" ] && [ "$CHAIN_P2P_SEEDS" ]; then
+    echo "overwriting seeds"
+    sed -i "s/seeds = \"\"/seeds = \"$CHAIN_P2P_SEEDS\"/" "$chain_config"
+fi
+
+# Snapshot
+if [ "$snapshot_dl" == "true" ]; then
+    if [ -n "${CONFIG_SNAPSHOT_URL}" ]; then
+        echo "Downloading snapshot from $CONFIG_SNAPSHOT_URL..."
+        rm -rf "$data_dir"
+        pushd "$(pwd)"
+        cd "$CHAIN_HOME"
+
+        #        go-getter -progress "$CONFIG_SNAPSHOT_URL" "$CHAIN_HOME/data"
+        # Detect content size via HTTP header `Content-Length`
+        # Note that the server can refuse to return `Content-Length`, or the URL can be incorrect
+        pv_args="-petrafb -i 5"
+        snapshot_size_in_bytes=$(wget "$snapshot_url" --spider --server-response -O - 2>&1 | sed -ne '/Content-Length/{s/.*: //;p}')
+        case "$snapshot_size_in_bytes" in
+            # Value cannot be started with `0`, and must be integer
+            [1-9]*[0-9])
+                pv_args+=" -s $snapshot_size_in_bytes"
+                ;;
+        esac
+
+        case "${snapshot_url,,}" in
+            *.tar.cz)
+                tar_cmd="tar -xJ -"
+                ;;
+            *.tar.gz)
+                tar_cmd="tar xzf -"
+                ;;
+            *.tar.lz4)
+                tar_cmd="lz4 -d | tar xf -"
+                ;;
+            *.tar.zst)
+                tar_cmd="zstd -cd | tar xf -"
+                ;;
+            *)
+                tar_cmd="tar xf -"
+                ;;
+        esac
+
+        # shellcheck disable=SC2086
+        (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
+
+        popd
+    else
+        echo "Snapshot URL not found"
+    fi
+fi
+
+# Restore keys
+if [ -n "$CONFIG_S3_PATH" ]; then
+    restore_key "node_key.json" "$chain_config_dir"
+    restore_key "priv_validator_key.json" "$chain_config_dir"
+fi
+
 DAEMON_HOME=${CHAIN_HOME}
 
-while IFS="=" read var val; do
-    varname=$(echo $var | sed -e "s/^CHAIN_/$ENV_PREFIX/")
-    unset $var
-    declare ${varname}=$val
-    export ${varname}
-done <<< $(env | grep ^"CHAIN_")
+while IFS="=" read -r var val; do
+    # shellcheck disable=SC2001
+    varname=$(echo "${var}" | sed -e "s/^CHAIN_/$ENV_PREFIX/")
+    unset "${var}"
+    declare "${varname}"="${val}"
+    # shellcheck disable=SC2163
+    export "${varname}"
+done <<<"$(env | grep ^"CHAIN_")"
 
 export UNSAFE_SKIP_BACKUP
 export DAEMON_NAME

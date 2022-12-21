@@ -20,9 +20,8 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
     - name: fetch tag
-      id: tag_name
       run: |
-        echo ::set-output name=RELEASE_TAG::${GITHUB_REF#refs/tags/}
+        echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
     - name: Docker meta
       id: meta
       uses: docker/metadata-action@v4
@@ -54,4 +53,4 @@ jobs:
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         build-args: |
-          VERSION=${{ steps.tag_name.outputs.RELEASE_TAG }}
+          VERSION=${{ env.RELEASE_TAG }}
