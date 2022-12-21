@@ -22,9 +22,9 @@ RUN \
     pv \
     lz4 \
  && rm -rf /var/lib/apt/lists/* \
- && git config --global advice.detachedHead "false" \
  && curl https://dl.min.io/client/mc/release/linux-$TARGETARCH/mc -o /usr/bin/mc \
- && chmod +x /usr/bin/mc
+ && chmod +x /usr/bin/mc \
+ && git config --global advice.detachedHead "false"
 
 FROM golang:${GO_VERSION}-bullseye as build
 
@@ -37,8 +37,17 @@ ENV GOPROXY=https://proxy.golang.org,direct
 
 SHELL ["/bin/bash", "-c"]
 
+RUN git config --global advice.detachedHead "false"
+
 RUN GOBIN=/usr/bin go install github.com/schwarzit/go-template/cmd/gt@latest
-RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@${COSMOVISOR_VERSION}
+
+#RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@${COSMOVISOR_VERSION}
+
+RUN \
+    git clone -b tools/cosmovisor/${COSMOVISOR_VERSION} --depth 1 https://github.com/cosmos/cosmos-sdk \
+ && cd cosmos-sdk/tools/cosmovisor/cmd/cosmovisor \
+ && GOBIN=/usr/bin go install
+
 RUN \
     git clone -b $GO_GETTER_VERSION --depth 1 https://github.com/hashicorp/go-getter \
  && cd go-getter/cmd/go-getter \
