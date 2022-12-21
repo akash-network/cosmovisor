@@ -40,10 +40,10 @@ jobs:
           ghcr.io/16psyche/cosmovisor
         # generate Docker tags based on the following events/attributes
         tags: |
-          type=semver,pattern=v{{version}}-${{ env.COSMOVISOR_VERSION }}
-          type=semver,pattern=v{{major}}.{{minor}}-${{ env.COSMOVISOR_VERSION }}
-          type=semver,pattern=v{{major}}.{{minor}}
-          type=sha
+          type=semver,priority=1000,pattern={{raw}}
+          type=semver,priority=999,pattern={{raw}},suffix=-${{ env.COSMOVISOR_VERSION }}
+          type=semver,priority=998,pattern={{major}}.{{minor}},prefix=v
+          type=semver,priority=997,pattern={{major}}.{{minor}},prefix=v,suffix=-${{ env.COSMOVISOR_VERSION }}
     - name: Login to GHCR
       if: github.event_name != 'pull_request'
       uses: docker/login-action@v2
