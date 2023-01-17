@@ -49,7 +49,7 @@ RUN \
  && GOBIN=/usr/bin go install
 
 FROM base
-LABEL "org.opencontainers.image.source"="https://github.com/16psyche/cosmovisor"
+LABEL "org.opencontainers.image.source"="https://github.com/akash-network/cosmovisor"
 
 ARG GO_VERSION
 ENV GO_VERSION=$GO_VERSION

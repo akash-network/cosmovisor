@@ -4,9 +4,9 @@ REGISTRY           ?= ghcr.io
 TAG_VERSION        ?= $(shell git describe --tags --abbrev=0)
 
 ifeq ($(REGISTRY),)
-	IMAGE_NAME      := 16psyche/cosmovisor:$(TAG_VERSION)-$(COSMOVISOR_VERSION)
+	IMAGE_NAME      := akash-network/cosmovisor:$(TAG_VERSION)-$(COSMOVISOR_VERSION)
 else
-	IMAGE_NAME      := $(REGISTRY)/16psyche/cosmovisor:$(TAG_VERSION)-$(COSMOVISOR_VERSION)
+	IMAGE_NAME      := $(REGISTRY)/akash-network/cosmovisor:$(TAG_VERSION)-$(COSMOVISOR_VERSION)
 endif
 
 DOCKER_BUILD=docker build

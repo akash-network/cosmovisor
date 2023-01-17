@@ -37,7 +37,7 @@ jobs:
       with:
         # list of Docker images to use as base name for tags
         images: |
-          ghcr.io/16psyche/cosmovisor
+          ghcr.io/akash-network/cosmovisor
         # generate Docker tags based on the following events/attributes
         tags: |
           type=semver,priority=1000,pattern={{raw}}

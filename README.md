@@ -8,7 +8,7 @@ It combines into one image following things:
 - download genesis
 
 ## Capabilities
-### Docker image `ghcr.io/16psyche/cosmovisor`
+### Docker image `ghcr.io/akash-network/cosmovisor`
 Supports following host/arch
 - linux/amd64
 - linux/arm64
