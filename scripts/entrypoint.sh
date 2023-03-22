@@ -44,7 +44,7 @@ if [[ -n $CONFIG_S3_ENDPOINT ]]; then
     echo "setting up s3 alias"
 
     # shellcheck disable=SC2086
-    mc alias set s3 $CONFIG_S3_ENDPOINT $CONFIG_S3_KEY $CONFIG_S3_SECRET
+    mc alias set s3 "$CONFIG_S3_ENDPOINT" "$CONFIG_S3_KEY" "$CONFIG_S3_SECRET"
 fi
 
 function blank_data() {
@@ -236,7 +236,7 @@ if [ ! -f "$cosmovisor_current_bin/$DAEMON_NAME" ]; then
 
     if [[ -n "$binary_url" ]]; then
         echo "downloading binary ${DAEMON_NAME} from $binary_url"
-        go-getter -progress -mode=file "${binary_url}" "${binary_path}/${DAEMON_NAME}"
+        go-getter -mode=file "${binary_url}" "${binary_path}/${DAEMON_NAME}"
     elif [[ $try_compile == true ]]; then
         echo "trying to compile binary for linux/$uname_arch"
 
@@ -310,7 +310,7 @@ if [[ "${import_genesis}" == "true" ]]; then
 
     rm -f "$chain_genesis_file"
     echo "downloading chain genesis from ${genesis_url}"
-    go-getter -progress -mode=file "${genesis_url}" "$chain_genesis_file"
+    go-getter -mode=file "${genesis_url}" "$chain_genesis_file"
 fi
 
 if [[ "${reset_data}" == "true" ]]; then

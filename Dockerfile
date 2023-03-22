@@ -1,7 +1,7 @@
 ARG GO_VERSION
-ARG TARGETARCH
 
 FROM debian:bullseye AS base
+ARG TARGETARCH
 
 ENV LANG="en_US.UTF-8"
 RUN \
@@ -22,7 +22,7 @@ RUN \
     pv \
     lz4 \
  && rm -rf /var/lib/apt/lists/* \
- && curl https://dl.min.io/client/mc/release/linux-$TARGETARCH/mc -o /usr/bin/mc \
+ && wget https://dl.min.io/client/mc/release/linux-$TARGETARCH/mc -P /usr/bin/ \
  && chmod +x /usr/bin/mc \
  && git config --global advice.detachedHead "false"
 
