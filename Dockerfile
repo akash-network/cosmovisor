@@ -40,13 +40,8 @@ SHELL ["/bin/bash", "-c"]
 RUN git config --global advice.detachedHead "false"
 
 RUN GOBIN=/usr/bin go install github.com/schwarzit/go-template/cmd/gt@latest
-
 RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@v${COSMOVISOR_VERSION}
-
-RUN \
-    git clone -b $GO_GETTER_VERSION --depth 1 https://github.com/hashicorp/go-getter \
- && cd go-getter/cmd/go-getter \
- && GOBIN=/usr/bin go install
+RUN GOBIN=/usr/bin go install github.com/troian/go-getter@${GO_GETTER_VERSION}
 
 FROM base
 LABEL "org.opencontainers.image.source"="https://github.com/akash-network/cosmovisor"
