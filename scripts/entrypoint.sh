@@ -40,11 +40,12 @@ CHAIN_STATESYNC_RPC_SERVERS=${CHAIN_STATESYNC_RPC_SERVERS:-}
 
 GO_VERSION=${GO_VERSION:-"1.19.2"}
 
-if [[ -n $CONFIG_S3_ENDPOINT ]]; then
-    echo "setting up s3 alias"
+export AWS_ACCESS_KEY_ID=$CONFIG_S3_KEY
+export AWS_SECRET_ACCESS_KEY=$CONFIG_S3_SECRET
 
-    # shellcheck disable=SC2086
-    mc alias set s3 "$CONFIG_S3_ENDPOINT" "$CONFIG_S3_KEY" "$CONFIG_S3_SECRET"
+if [[ -n $CONFIG_S3_ENDPOINT ]]; then
+    s3_uri_base="s3://${CONFIG_S3_BUCKET}/${CONFIG_S3_PATH}"
+    aws_args="--endpoint-url ${CONFIG_S3_ENDPOINT}"
 fi
 
 function blank_data() {
@@ -59,10 +60,18 @@ restore_key() {
         file+=".gpg"
     fi
 
+    if [[ -z $CONFIG_S3_ENDPOINT ]]; then
+        return
+    fi
+
     # shellcheck disable=SC2086
-    if mc ls s3/${CONFIG_S3_PATH}/$file >/dev/null 2>&1 ; then
+    aws ""$aws_args s3api head-object --bucket "${CONFIG_S3_BUCKET}" --key "${CONFIG_S3_PATH}/$file" >/dev/null 2>&1
+
+    # shellcheck disable=SC2086
+    if aws $aws_args s3api head-object --bucket "${CONFIG_S3_BUCKET}" --key "${CONFIG_S3_PATH}/$file" >/dev/null 2>&1 ; then
         echo "restoring $file"
-        mc cp s3/${CONFIG_S3_PATH}/$file "$2/$file"
+        rm -f $2/$file
+        aws $aws_args s3 cp "${s3_uri_base}/$file" $2/$file --only-show-errors
 
         if [[ $file == *.gpg ]]; then
             echo "decrypting $file"
