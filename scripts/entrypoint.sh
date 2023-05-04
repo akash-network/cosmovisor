@@ -26,6 +26,7 @@ CONFIG_S3_SECRET=${CONFIG_S3_SECRET:-}
 CONFIG_S3_ENDPOINT="${CONFIG_S3_ENDPOINT:-https://s3.filebase.com}"
 CONFIG_S3_PATH=${CONFIG_S3_PATH:-}
 CONFIG_GPG_KEY_PASSWORD="${CONFIG_GPG_KEY_PASSWORD:-}"
+CONFIG_S3_ALWAYS_DL="${CONFIG_S3_ALWAYS_DL:=false}"
 
 unset CONFIG_IMPORT_GENESIS
 unset CONFIG_UNSAFE_RESET_ALL
@@ -484,13 +485,6 @@ if [ "$snapshot_dl" == "true" ]; then
         if [[ -n $sz ]]; then
             pv_args+=" -s $sz"
         fi
-#        snapshot_size_in_bytes=$(wget "$snapshot_url" --spider --server-response -O - 2>&1 | sed -ne '/Content-Length/{s/.*: //;p}')
-#        case "$snapshot_size_in_bytes" in
-#            # Value cannot be started with `0`, and must be integer
-#            [1-9]*[0-9])
-#                pv_args+=" -s $snapshot_size_in_bytes"
-#                ;;
-#        esac
 
         case "${snapshot_url,,}" in
             *.tar.cz)
@@ -520,9 +514,10 @@ if [ "$snapshot_dl" == "true" ]; then
 fi
 
 # Restore keys
-if [ -n "$CONFIG_S3_PATH" ]; then
+if [[ -n "$CONFIG_S3_PATH" ]] && [[ ! -f "$CHAIN_HOME/.keys" || "${CONFIG_S3_ALWAYS_DL}" == "true" ]]; then
     restore_key "node_key.json" "$chain_config_dir"
     restore_key "priv_validator_key.json" "$chain_config_dir"
+    touch "$CHAIN_HOME/.keys"
 fi
 
 DAEMON_HOME=${CHAIN_HOME}
