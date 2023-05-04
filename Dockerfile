@@ -26,10 +26,8 @@ RUN \
  && wget -q "https://awscli.amazonaws.com/awscli-exe-linux-${AWSCLI_ARCH}.zip" -O awscli.zip \
  && unzip awscli.zip && rm awscli.zip \
  && ./aws/install \
+ && rm -r aws \
  && git config --global advice.detachedHead "false"
-
-# && wget https://dl.min.io/client/mc/release/linux-$TARGETARCH/mc -P /usr/bin/ \
-# && chmod +x /usr/bin/mc \
 
 FROM golang:${GO_VERSION}-bullseye as build
 
