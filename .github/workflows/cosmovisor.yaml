@@ -35,7 +35,7 @@ jobs:
           ghcr.io/akash-network/cosmovisor-base
         # generate Docker tags based on the following events/attributes
         tags: |
-          type=semver,priority=1000,value=${{ env.RELEASE_TAG }}
+          type=semver,priority=1000,pattern={{major}}.{{minor}}.{{patch}},prefix=v,value=${{ env.RELEASE_TAG }}
     - name: Login to GHCR
       if: github.event_name != 'pull_request'
       uses: docker/login-action@v2
