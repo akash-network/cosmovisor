@@ -1,4 +1,4 @@
-name: release
+name: release-cosmovisor
 
 defaults:
   run:
@@ -10,7 +10,7 @@ on:
       - cosmovisor/v*
 
 jobs:
-  release:
+  cosmovisor:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout
@@ -23,9 +23,9 @@ jobs:
       uses: docker/setup-qemu-action@v2
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
-    - name: fetch tag
+    - name: Fetch tag
       run: |
-        echo "RELEASE_TAG=${GITHUB_REF#refs/tags/cosmovisor}" >> $GITHUB_ENV
+        echo "RELEASE_TAG=${GITHUB_REF#refs/tags/cosmovisor/}" >> $GITHUB_ENV
     - name: Docker meta
       id: meta
       uses: docker/metadata-action@v4
