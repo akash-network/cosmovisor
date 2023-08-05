@@ -1,0 +1,12 @@
+ARG GO_VERSION
+
+FROM golang:${GO_VERSION}-bullseye as build
+
+ENV GO111MODULE=on
+ENV GOPROXY=https://proxy.golang.org,direct
+
+SHELL ["/bin/bash", "-c"]
+
+ARG COSMOVISOR_VERSION
+
+RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@${COSMOVISOR_VERSION}
