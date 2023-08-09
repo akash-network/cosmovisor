@@ -17,7 +17,6 @@ Image version corresponds to the version of the [cosmovisor](https://github.com/
 
 ## Tested mainnet chains
 - Akash
-- Sifchain
 - Rebus
 - Stride
 

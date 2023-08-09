@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+shopt -s dotglob
+
 set_x=${SHELL_SET_X:-false}
 set_e=${SHELL_SET_E:-true}
 set_u=${SHELL_SET_U:-true}
@@ -17,7 +19,6 @@ addrbook_url=${CONFIG_ADDRBOOK_URL:-}
 peer_validation=${CONFIG_PEER_VALIDATION:-false}
 overwrite_seeds=${CONFIG_OVERWRITE_SEEDS:-false}
 snapshot_url=${CONFIG_SNAPSHOT_URL:-}
-snapshot_has_data_dir=${CONFIG_SNAPSHOT_HAS_DATA_DIR:-false}
 snapshot_dl=${CONFIG_SNAPSHOT_DL:-false}
 
 CONFIG_WASM_PATH=${CONFIG_WASM_PATH:-wasm}
@@ -281,6 +282,13 @@ if [ ! -f "$cosmovisor_current_bin/$DAEMON_NAME" ]; then
                 echo "\"linux/$uname_arch\" binary for chain version $chain_version is not present in chain metadata"
                 exit $exit_result
             fi
+        else
+            binary_url=$(jq -eMr --arg mach "linux/$uname_arch" '.codebase.binaries | select(.[$mach] != null) | .[$mach]' "$chain_metadata")
+            exit_result=$?
+            if [ $exit_result -ne 0 ]; then
+                echo "\"linux/$uname_arch\" binary for chain version $chain_version is not present in chain metadata"
+                exit $exit_result
+            fi
         fi
     fi
 
@@ -516,41 +524,42 @@ if [ "$snapshot_dl" == true ]; then
         rm -rf "$data_dir"
         pushd "$(pwd)"
 
-        if [ "$snapshot_has_data_dir" == false ]; then
-            mkdir -p "$data_dir"
-            unpack_dir="$data_dir"
+        mkdir -p "$data_dir"
+        cd "$data_dir"
+
+        if [[ "${snapshot_url}" =~ ^https?:\/\/.* ]]; then
+            echo "Downloading snapshot to [$(pwd)] from $snapshot_url..."
+
+            # Detect content size via HTTP header `Content-Length`
+            # Note that the server can refuse to return `Content-Length`, or the URL can be incorrect
+            pv_args="-petrafb -i 5"
+            sz=$(content_size "$snapshot_url")
+            if [[ -n $sz ]]; then
+                pv_args+=" -s $sz"
+            fi
+
+            name=$(content_name "$snapshot_url")
+
+            tar_cmd=$(content_type "$name")
+
+            # shellcheck disable=SC2086
+            (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
         else
-            unpack_dir="${CHAIN_HOME}"
+            echo "Unpacking snapshot to [$(pwd)] from $snapshot_url..."
+
+            tar_cmd=$(content_type "$snapshot_url")
+
+            # shellcheck disable=SC2086
+            (pv -petrafb -i 5 "$snapshot_url" | eval "$tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
         fi
 
-        cd "$unpack_dir"
+        # if snapshot provides data dir then move all things up
+        if [[ -d data ]]; then
+            echo "snapshot has data dir. moving content..."
+            mv data/* ./
 
-#        if [ -n "${snapshot_file}" ]; then
-#            echo "Unpacking snapshot to [$unpack_dir] from $snapshot_file..."
-#
-#            tar_cmd=$(content_type "$snapshot_file")
-#
-#            # shellcheck disable=SC2086
-#            (pv -petrafb -i 5 $snapshot_file | eval "$tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
-#        else
-#            echo "Downloading snapshot [$unpack_dir] from $snapshot_url..."
-#
-#            # Detect content size via HTTP header `Content-Length`
-#            # Note that the server can refuse to return `Content-Length`, or the URL can be incorrect
-#            pv_args="-petrafb -i 5"
-#            sz=$(content_size "$snapshot_url")
-#            if [[ -n $sz ]]; then
-#                pv_args+=" -s $sz"
-#            fi
-#
-#            name=$(content_name "$snapshot_url")
-#
-#            tar_cmd=$(content_type "$name")
-#
-#            # shellcheck disable=SC2086
-#            (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
-#        fi
-
+            rm -rf data
+        fi
         popd
     else
         echo "Snapshot URL not found"
@@ -581,14 +590,16 @@ export DAEMON_HOME
 
 env | sort | grep -q "^CHAIN_" && echo "some env variable starting with CHAIN_ have not been unset" && exit 1
 
-echo ""
 echo "dump current environment variables..."
+echo ""
 echo "app env..."
-env | sort | grep "^${ENV_PREFIX}\|^DAEMON_\|^CHAIN_"
-
-printf '\nother env...'
-env | sort | grep -v "^${ENV_PREFIX}\|^DAEMON_\|^CHAIN_"
-
+env | sort | grep "^DAEMON_"
+echo ""
+env | sort | grep "^${ENV_PREFIX}"
+echo ""
+echo "other env..."
+env | sort | grep -v "^${ENV_PREFIX}\|^DAEMON_"
+echo ""
 [[ -f /boot/prerun2.sh ]] && /boot/prerun2.sh
 
 exec cosmovisor run start |& grep --line-buffered -vi 'peer'
