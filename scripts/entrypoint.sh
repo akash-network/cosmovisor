@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+shopt -s dotglob
+
 set_x=${SHELL_SET_X:-false}
 set_e=${SHELL_SET_E:-true}
 set_u=${SHELL_SET_U:-true}
@@ -17,7 +19,7 @@ addrbook_url=${CONFIG_ADDRBOOK_URL:-}
 peer_validation=${CONFIG_PEER_VALIDATION:-false}
 overwrite_seeds=${CONFIG_OVERWRITE_SEEDS:-false}
 snapshot_url=${CONFIG_SNAPSHOT_URL:-}
-snapshot_dl=false
+snapshot_dl=${CONFIG_SNAPSHOT_DL:-false}
 
 CONFIG_WASM_PATH=${CONFIG_WASM_PATH:-wasm}
 
@@ -32,6 +34,9 @@ unset CONFIG_IMPORT_GENESIS
 unset CONFIG_UNSAFE_RESET_ALL
 unset CONFIG_DOWNLOAD_RECOMMENDED_BINARY
 unset CONFIG_PEER_VALIDATION
+unset CONFIG_SNAPSHOT_URL
+unset CONFIG_SNAPSHOT_HAS_DATA_DIR
+unset CONFIG_SNAPSHOT_DL
 unset CHAIN_INIT
 
 UNSAFE_SKIP_BACKUP=${UNSAFE_SKIP_BACKUP:-false}
@@ -94,6 +99,35 @@ function content_size() {
     esac
 }
 
+function content_name() {
+    name=$(wget "$1" --spider --server-response -O - 2>&1 | grep "Content-Disposition:" | tail -1 | awk -F"filename=" '{print $2}')
+    # shellcheck disable=SC2181
+    [ $? -ne 0 ] && exit 1
+    echo "$name"
+}
+
+function content_type() {
+    case "$1" in
+        *.tar.cz)
+            tar_cmd="tar -xJ -"
+            ;;
+        *.tar.gz)
+            tar_cmd="tar xzf -"
+            ;;
+        *.tar.lz4)
+            tar_cmd="lz4 -d | tar xf -"
+            ;;
+        *.tar.zst)
+            tar_cmd="zstd -cd | tar xf -"
+            ;;
+        *)
+            tar_cmd="tar xf -"
+            ;;
+    esac
+
+    echo "$tar_cmd"
+}
+
 if [[ ${set_x} == "true" ]]; then
     set -x
 else
@@ -116,7 +150,6 @@ function usage() {
     echo "
 supported values to the CHAIN env variable
     - akash
-    - sifchain
     - rebus
     - stride
     - osmosis
@@ -136,9 +169,6 @@ if [[ -z $config_url ]]; then
     case "${CHAIN}" in
         akash)
             config_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/akash/chain.json
-            ;;
-        sifchain)
-            config_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/sifchain/chain.json
             ;;
         stride)
             config_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/stride/chain.json
@@ -213,6 +243,9 @@ CHAIN_HOME="$(echo "${CHAIN_HOME}" | envsubst)"
 CHAIN_CHAIN_ID=${CHAIN_ID:-$(jq -Mr '.chain_id' "$chain_metadata")}
 unset CHAIN_ID
 
+chain_version=${CHAIN_VERSION:-}
+unset CHAIN_VERSION
+
 chain_genesis_file="$CHAIN_HOME/config/genesis.json"
 chain_config_dir="$CHAIN_HOME/config"
 chain_config="$chain_config_dir/config.toml"
@@ -241,7 +274,22 @@ if [ ! -f "$cosmovisor_current_bin/$DAEMON_NAME" ]; then
 
     if [[ -z "$binary_url" ]]; then
         echo "CONFIG_BINARY_URL is empty. trying to find recommended binary in the chain metadata"
-        binary_url=$(jq --arg mach "linux/$uname_arch" -Mr '.codebase.binaries | select(.[$mach] != null) | .[$mach]' "$chain_metadata")
+
+        if [[ -n "$chain_version" ]]; then
+            binary_url=$(jq -eMr --arg version "$chain_version" --arg mach "linux/$uname_arch" '.codebase.versions[] | select(.name == $version) | .binaries | select(.[$mach] != null) | .[$mach]' "$chain_metadata")
+            exit_result=$?
+            if [ $exit_result -ne 0 ]; then
+                echo "\"linux/$uname_arch\" binary for chain version $chain_version is not present in chain metadata"
+                exit $exit_result
+            fi
+        else
+            binary_url=$(jq -eMr --arg mach "linux/$uname_arch" '.codebase.binaries | select(.[$mach] != null) | .[$mach]' "$chain_metadata")
+            exit_result=$?
+            if [ $exit_result -ne 0 ]; then
+                echo "\"linux/$uname_arch\" binary for chain version $chain_version is not present in chain metadata"
+                exit $exit_result
+            fi
+        fi
     fi
 
     if [[ -n "$binary_url" ]]; then
@@ -330,7 +378,7 @@ if [[ "${reset_data}" == "true" ]]; then
 
     blank_data
     snapshot_dl=true
-elif [[ ! -d ${data_dir} ]]; then
+elif [[ ! -d ${data_dir} ]] || ! find "$data_dir" -mindepth 1 -maxdepth 1 | read; then
     snapshot_dl=true
 fi
 
@@ -471,42 +519,47 @@ if [ "$overwrite_seeds" == "true" ] && [ -n "$CHAIN_P2P_SEEDS" ]; then
 fi
 
 # Snapshot
-if [ "$snapshot_dl" == "true" ]; then
+if [ "$snapshot_dl" == true ]; then
     if [ -n "${snapshot_url}" ]; then
-        echo "Downloading snapshot from $snapshot_url..."
         rm -rf "$data_dir"
         pushd "$(pwd)"
-        cd "$CHAIN_HOME"
 
-        # Detect content size via HTTP header `Content-Length`
-        # Note that the server can refuse to return `Content-Length`, or the URL can be incorrect
-        pv_args="-petrafb -i 5"
-        sz=$(content_size "$snapshot_url")
-        if [[ -n $sz ]]; then
-            pv_args+=" -s $sz"
+        mkdir -p "$data_dir"
+        cd "$data_dir"
+
+        if [[ "${snapshot_url}" =~ ^https?:\/\/.* ]]; then
+            echo "Downloading snapshot to [$(pwd)] from $snapshot_url..."
+
+            # Detect content size via HTTP header `Content-Length`
+            # Note that the server can refuse to return `Content-Length`, or the URL can be incorrect
+            pv_args="-petrafb -i 5"
+            sz=$(content_size "$snapshot_url")
+            if [[ -n $sz ]]; then
+                pv_args+=" -s $sz"
+            fi
+
+            name=$(content_name "$snapshot_url")
+
+            tar_cmd=$(content_type "$name")
+
+            # shellcheck disable=SC2086
+            (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
+        else
+            echo "Unpacking snapshot to [$(pwd)] from $snapshot_url..."
+
+            tar_cmd=$(content_type "$snapshot_url")
+
+            # shellcheck disable=SC2086
+            (pv -petrafb -i 5 "$snapshot_url" | eval "$tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
         fi
 
-        case "${snapshot_url,,}" in
-            *.tar.cz)
-                tar_cmd="tar -xJ -"
-                ;;
-            *.tar.gz)
-                tar_cmd="tar xzf -"
-                ;;
-            *.tar.lz4)
-                tar_cmd="lz4 -d | tar xf -"
-                ;;
-            *.tar.zst)
-                tar_cmd="zstd -cd | tar xf -"
-                ;;
-            *)
-                tar_cmd="tar xf -"
-                ;;
-        esac
+        # if snapshot provides data dir then move all things up
+        if [[ -d data ]]; then
+            echo "snapshot has data dir. moving content..."
+            mv data/* ./
 
-        # shellcheck disable=SC2086
-        (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
-
+            rm -rf data
+        fi
         popd
     else
         echo "Snapshot URL not found"
@@ -538,8 +591,15 @@ export DAEMON_HOME
 env | sort | grep -q "^CHAIN_" && echo "some env variable starting with CHAIN_ have not been unset" && exit 1
 
 echo "dump current environment variables..."
-env | sort | grep "^${ENV_PREFIX}\|^DAEMON_\|^CHAIN_"
-
+echo ""
+echo "app env..."
+env | sort | grep "^DAEMON_"
+echo ""
+env | sort | grep "^${ENV_PREFIX}"
+echo ""
+echo "other env..."
+env | sort | grep -v "^${ENV_PREFIX}\|^DAEMON_"
+echo ""
 [[ -f /boot/prerun2.sh ]] && /boot/prerun2.sh
 
-exec cosmovisor run start |& grep -vi 'peer'
+exec cosmovisor run start |& grep --line-buffered -vi 'peer'
