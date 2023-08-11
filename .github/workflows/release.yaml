@@ -63,6 +63,7 @@ jobs:
           COSMOVISOR_VERSION=${{ env.COSMOVISOR_VERSION }}
           GO_VERSION=${{ env.GO_VERSION }}
           GO_GETTER_VERSION=${{ env.GO_GETTER_VERSION }}
+          GO_TEMPLATE_VERSION=${{ env.GO_TEMPLATE_VERSION }}
     - name: Generate changelog
       run: make gen-changelog
     - name: create release
