@@ -54,4 +54,4 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         build-args: |
           COSMOVISOR_VERSION=${{ env.COSMOVISOR_VERSION }}
-          GO_VERSION=${{ env.GO_VERSION }}
+          GOVERSION=${{ env.GOVERSION }}

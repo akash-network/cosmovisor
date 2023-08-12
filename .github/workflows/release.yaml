@@ -28,7 +28,7 @@ jobs:
         echo "RELEASE_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
     - uses: actions/setup-go@v3
       with:
-        go-version: "${{ env.GO_VERSION }}"
+        go-version: "${{ env.GOVERSION }}"
     - name: Install git-chglog
       run: go install github.com/git-chglog/git-chglog/cmd/git-chglog@${{ env.GIT_CHGLOG_VERSION }}
     - name: Docker meta
@@ -61,7 +61,7 @@ jobs:
         labels: ${{ steps.meta.outputs.labels }}
         build-args: |
           COSMOVISOR_VERSION=${{ env.COSMOVISOR_VERSION }}
-          GO_VERSION=${{ env.GO_VERSION }}
+          GOVERSION=${{ env.GOVERSION }}
           GO_GETTER_VERSION=${{ env.GO_GETTER_VERSION }}
           GO_TEMPLATE_VERSION=${{ env.GO_TEMPLATE_VERSION }}
     - name: Generate changelog

@@ -25,7 +25,7 @@ gen-changelog:
 cosmovisor-%:
 	@echo "building $(IMAGE_NAME)-$*"
 	$(DOCKER_BUILD) --platform=linux/$* -t $(IMAGE_NAME)-$* \
-		--build-arg GO_VERSION=$(GO_VERSION) \
+		--build-arg GOVERSION=$(GOVERSION) \
 		--build-arg COSMOVISOR_VERSION=$(COSMOVISOR_VERSION) \
 		--build-arg GO_GETTER_VERSION=$(GO_GETTER_VERSION) \
 		--build-arg GO_TEMPLATE_VERSION=$(GO_TEMPLATE_VERSION) \
@@ -35,7 +35,7 @@ cosmovisor-%:
 cosmovisor-base-%:
 	@echo "building $(IMAGE_BASE_NAME)-$*"
 	$(DOCKER_BUILD) --platform=linux/$* -t $(IMAGE_BASE_NAME)-$* \
-		--build-arg GO_VERSION=$(GO_VERSION) \
+		--build-arg GOVERSION=$(GOVERSION) \
 		--build-arg COSMOVISOR_VERSION=$(COSMOVISOR_VERSION) \
 		-f Dockerfile.cosmovisor .
 
@@ -55,6 +55,9 @@ docker-push-base-%:
 
 .PHONY: docker-push
 docker-push: $(patsubst %, docker-push-%,$(SUBIMAGES))
+
+.PHONY: docker-push-base
+docker-push-base: $(patsubst %, docker-push-base-%,$(SUBIMAGES))
 
 .PHONY: manifest-create
 manifest-create:

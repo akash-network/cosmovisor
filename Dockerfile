@@ -46,8 +46,8 @@ RUN \
  && dpkg -i go-getter.deb \
  && rm -f go-getter.deb
 
-ARG GO_VERSION
-ENV GO_VERSION=$GO_VERSION
+ARG GOVERSION
+ENV GOVERSION=$GOVERSION
 
 COPY --from=cosmovisor /usr/bin/cosmovisor /usr/bin
 COPY ./scripts/entrypoint.sh /entrypoint.sh
