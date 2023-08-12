@@ -20,8 +20,7 @@ peer_validation=${CONFIG_PEER_VALIDATION:-false}
 overwrite_seeds=${CONFIG_OVERWRITE_SEEDS:-false}
 snapshot_url=${CONFIG_SNAPSHOT_URL:-}
 snapshot_dl=${CONFIG_SNAPSHOT_DL:-false}
-
-CONFIG_WASM_PATH=${CONFIG_WASM_PATH:-wasm}
+wasm_dir=${CONFIG_WASM_DIR:-wasm}
 
 CONFIG_S3_KEY=${CONFIG_S3_KEY:-}
 CONFIG_S3_SECRET=${CONFIG_S3_SECRET:-}
@@ -37,6 +36,7 @@ unset CONFIG_PEER_VALIDATION
 unset CONFIG_SNAPSHOT_URL
 unset CONFIG_SNAPSHOT_HAS_DATA_DIR
 unset CONFIG_SNAPSHOT_DL
+unset CONFIG_WASM_DIR
 unset CHAIN_INIT
 
 UNSAFE_SKIP_BACKUP=${UNSAFE_SKIP_BACKUP:-false}
@@ -44,8 +44,10 @@ UNSAFE_SKIP_BACKUP=${UNSAFE_SKIP_BACKUP:-false}
 CHAIN_STATESYNC_ENABLE=${CHAIN_STATESYNC_ENABLE:-false}
 CHAIN_STATESYNC_RPC_SERVERS=${CHAIN_STATESYNC_RPC_SERVERS:-}
 
-GO_VERSION=${GO_VERSION:-"1.19.2"}
+GOTOOLCHAIN=${GOTOOLCHAIN:-"latest"}
+GOVERSION=${GOVERSION:-"1.21.0"}
 
+export GOTOOLCHAIN
 export AWS_ACCESS_KEY_ID=$CONFIG_S3_KEY
 export AWS_SECRET_ACCESS_KEY=$CONFIG_S3_SECRET
 
@@ -90,7 +92,9 @@ restore_key() {
 }
 
 function content_size() {
-    size_in_bytes=$(wget "$1" --spider --server-response -O - 2>&1 | sed -ne '/Content-Length/{s/.*: //;p}')
+    local size_in_bytes
+
+    size_in_bytes=$(wget "$1" --spider --server-response -O - 2>&1 | grep "Content-Length" | awk '{print $2}' | tr -d '\n')
     case "$size_in_bytes" in
         # Value cannot be started with `0`, and must be integer
     [1-9]*[0-9])
@@ -103,21 +107,25 @@ function content_name() {
     name=$(wget "$1" --spider --server-response -O - 2>&1 | grep "Content-Disposition:" | tail -1 | awk -F"filename=" '{print $2}')
     # shellcheck disable=SC2181
     [ $? -ne 0 ] && exit 1
-    echo "$name"
+    if [[ "$name" == "" ]]; then
+        echo "$1"
+    else
+        echo "$name"
+    fi
 }
 
 function content_type() {
     case "$1" in
-        *.tar.cz)
+        *.tar.cz*)
             tar_cmd="tar -xJ -"
             ;;
-        *.tar.gz)
+        *.tar.gz*)
             tar_cmd="tar xzf -"
             ;;
-        *.tar.lz4)
+        *.tar.lz4*)
             tar_cmd="lz4 -d | tar xf -"
             ;;
-        *.tar.zst)
+        *.tar.zst*)
             tar_cmd="zstd -cd | tar xf -"
             ;;
         *)
@@ -255,8 +263,8 @@ cosmovisor_genesis="$CHAIN_HOME/cosmovisor/genesis"
 cosmovisor_current="$CHAIN_HOME/cosmovisor/current"
 cosmovisor_current_bin="$cosmovisor_current/bin"
 
-data_dir="${CHAIN_HOME}/data"
-wasm_dir="${CHAIN_HOME}/${CONFIG_WASM_PATH}"
+data_path="${CHAIN_HOME}/data"
+wasm_path="${CHAIN_HOME}/${wasm_dir}"
 
 [[ -f /boot/prerun1.sh ]] && /boot/prerun1.sh
 
@@ -299,8 +307,8 @@ if [ ! -f "$cosmovisor_current_bin/$DAEMON_NAME" ]; then
         echo "trying to compile binary for linux/$uname_arch"
 
         if ! command -v go &> /dev/null ; then
-            echo "go has not been found. installing go$GO_VERSION"
-            go_url="https://go.dev/dl/go${GO_VERSION}.linux-${uname_arch}.tar.gz"
+            echo "go has not been found. installing go$GOVERSION"
+            go_url="https://go.dev/dl/go${GOVERSION}.linux-${uname_arch}.tar.gz"
 
             pv_args="-petrafb"
             sz=$(content_size "$go_url")
@@ -373,12 +381,12 @@ fi
 
 if [[ "${reset_data}" == "true" ]]; then
     echo "cleaning data dir"
-    rm -rf "${data_dir}"
-    rm -rf "${wasm_dir}"
+    rm -rf "${data_path}"
+    rm -rf "${wasm_path}"
 
     blank_data
     snapshot_dl=true
-elif [[ ! -d ${data_dir} ]] || ! find "$data_dir" -mindepth 1 -maxdepth 1 | read; then
+elif [[ ! -d ${data_path} ]] || ! find "$data_path" -mindepth 1 -maxdepth 1 | read -r; then
     snapshot_dl=true
 fi
 
@@ -521,11 +529,13 @@ fi
 # Snapshot
 if [ "$snapshot_dl" == true ]; then
     if [ -n "${snapshot_url}" ]; then
-        rm -rf "$data_dir"
+        rm -rf "$data_path"
+        rm -rf "$wasm_path"
+
         pushd "$(pwd)"
 
-        mkdir -p "$data_dir"
-        cd "$data_dir"
+        mkdir -p "$data_path"
+        cd "$data_path"
 
         if [[ "${snapshot_url}" =~ ^https?:\/\/.* ]]; then
             echo "Downloading snapshot to [$(pwd)] from $snapshot_url..."
@@ -538,9 +548,7 @@ if [ "$snapshot_dl" == true ]; then
                 pv_args+=" -s $sz"
             fi
 
-            name=$(content_name "$snapshot_url")
-
-            tar_cmd=$(content_type "$name")
+            tar_cmd=$(content_type "$(content_name "$snapshot_url")")
 
             # shellcheck disable=SC2086
             (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
@@ -557,9 +565,14 @@ if [ "$snapshot_dl" == true ]; then
         if [[ -d data ]]; then
             echo "snapshot has data dir. moving content..."
             mv data/* ./
-
             rm -rf data
         fi
+
+        if [[ -d wasm ]]; then
+            echo "snapshot has wasm dir. moving content..."
+            mv wasm ../
+        fi
+
         popd
     else
         echo "Snapshot URL not found"
