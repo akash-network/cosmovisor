@@ -1,7 +1,7 @@
 ARG COSMOVISOR_VERSION
 FROM ghcr.io/akash-network/cosmovisor-base:$COSMOVISOR_VERSION as cosmovisor
 
-FROM debian:bullseye AS base
+FROM ubuntu:jammy AS base
 LABEL "org.opencontainers.image.source"="https://github.com/akash-network/cosmovisor"
 
 ARG TARGETARCH
