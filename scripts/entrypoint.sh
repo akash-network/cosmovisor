@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 
+set -o pipefail
+
 shopt -s dotglob
 
 set_x=${SHELL_SET_X:-false}
-set_e=${SHELL_SET_E:-true}
+set_e=${SHELL_SET_E:-false}
 set_u=${SHELL_SET_U:-true}
 set_pipefail=${SHELL_SET_PIPEFAIL:-false}
 
@@ -95,18 +97,20 @@ function content_size() {
     local size_in_bytes
 
     size_in_bytes=$(wget "$1" --spider --server-response -O - 2>&1 | grep "Content-Length" | awk '{print $2}' | tr -d '\n')
+    err=$?
     case "$size_in_bytes" in
         # Value cannot be started with `0`, and must be integer
     [1-9]*[0-9])
         echo "$size_in_bytes"
         ;;
     esac
+
+    return "$err"
 }
 
 function content_name() {
     name=$(wget "$1" --spider --server-response -O - 2>&1 | grep "Content-Disposition:" | tail -1 | awk -F"filename=" '{print $2}')
     # shellcheck disable=SC2181
-    [ $? -ne 0 ] && exit 1
     if [[ "$name" == "" ]]; then
         echo "$1"
     else
@@ -544,14 +548,19 @@ if [ "$snapshot_dl" == true ]; then
             # Note that the server can refuse to return `Content-Length`, or the URL can be incorrect
             pv_args="-petrafb -i 5"
             sz=$(content_size "$snapshot_url")
-            if [[ -n $sz ]]; then
-                pv_args+=" -s $sz"
+            # shellcheck disable=SC2181
+            if [ $? -eq 0 ]; then
+                if [[ -n $sz ]]; then
+                    pv_args+=" -s $sz"
+                fi
+
+                tar_cmd=$(content_type "$(content_name "$snapshot_url")")
+
+                # shellcheck disable=SC2086
+                (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
+            else
+                echo "unable to download snapshot"
             fi
-
-            tar_cmd=$(content_type "$(content_name "$snapshot_url")")
-
-            # shellcheck disable=SC2086
-            (wget -nv -O - "$snapshot_url" | pv $pv_args | eval " $tar_cmd") 2>&1 | stdbuf -o0 tr '\r' '\n'
         else
             echo "Unpacking snapshot to [$(pwd)] from $snapshot_url..."
 
