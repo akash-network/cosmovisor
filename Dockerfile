@@ -1,5 +1,6 @@
-ARG COSMOVISOR_VERSION
-FROM ghcr.io/akash-network/cosmovisor-base:$COSMOVISOR_VERSION as cosmovisor
+ARG COSMOVISOR_VERSION=v1.6.0
+
+FROM ghcr.io/akash-network/cosmovisor-base:$COSMOVISOR_VERSION AS cosmovisor
 
 FROM ubuntu:jammy AS base
 LABEL "org.opencontainers.image.source"="https://github.com/akash-network/cosmovisor"
