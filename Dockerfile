@@ -41,8 +41,7 @@ RUN \
 
 RUN \
     git config --global advice.detachedHead "false" \
- && wget https://github.com/SchwarzIT/go-template/releases/download/${GO_TEMPLATE_VERSION}/gt-linux-${TARGETARCH} -O /usr/bin/gt \
- && chmod +x /usr/bin/gt \
+ && wget -qO- https://github.com/SchwarzIT/go-template/releases/download/${GO_TEMPLATE_VERSION}/gt-linux-${TARGETARCH}.tar.gz | tar xvz -C /usr/bin \
  && wget https://github.com/troian/go-getter/releases/download/${GO_GETTER_VERSION}/go-getter_linux_${TARGETARCH}.deb -O go-getter.deb \
  && dpkg -i go-getter.deb \
  && rm -f go-getter.deb
