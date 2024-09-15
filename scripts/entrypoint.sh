@@ -13,6 +13,8 @@ unset CHAIN_IMPORT_GENESIS
 unset CHAIN_UNSAFE_RESET_ALL
 unset SHELL_SET_PIPEFAIL
 
+chain_type=${CHAIN_TYPE:-mainnet}
+
 import_genesis=${CONFIG_FORCE_IMPORT_GENESIS:-false}
 reset_data=${CONFIG_RESET_DATA:-false}
 binary_url=${CONFIG_BINARY_URL:-}
@@ -22,6 +24,8 @@ peer_validation=${CONFIG_PEER_VALIDATION:-false}
 overwrite_seeds=${CONFIG_OVERWRITE_SEEDS:-false}
 snapshot_url=${CONFIG_SNAPSHOT_URL:-}
 snapshot_dl=${CONFIG_SNAPSHOT_DL:-false}
+snapshot_source=${CONFIG_SNAPSHOT_SOURCE:-polkachu}
+
 wasm_dir=${CONFIG_WASM_DIR:-wasm}
 
 CONFIG_S3_KEY=${CONFIG_S3_KEY:-}
@@ -38,8 +42,10 @@ unset CONFIG_PEER_VALIDATION
 unset CONFIG_SNAPSHOT_URL
 unset CONFIG_SNAPSHOT_HAS_DATA_DIR
 unset CONFIG_SNAPSHOT_DL
+unset CONFIG_SNAPSHOT_SOURCE
 unset CONFIG_WASM_DIR
 unset CHAIN_INIT
+unset CHAIN_TYPE
 
 UNSAFE_SKIP_BACKUP=${UNSAFE_SKIP_BACKUP:-false}
 
@@ -47,7 +53,7 @@ CHAIN_STATESYNC_ENABLE=${CHAIN_STATESYNC_ENABLE:-false}
 CHAIN_STATESYNC_RPC_SERVERS=${CHAIN_STATESYNC_RPC_SERVERS:-}
 
 GOTOOLCHAIN=${GOTOOLCHAIN:-"latest"}
-GOVERSION=${GOVERSION:-"1.21.0"}
+GOVERSION=${GOVERSION:-"1.23.0"}
 
 export GOTOOLCHAIN
 export AWS_ACCESS_KEY_ID=$CONFIG_S3_KEY
@@ -180,7 +186,15 @@ if [[ -z $config_url ]]; then
     # shellcheck disable=SC2153
     case "${CHAIN}" in
         akash)
-            config_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/akash/chain.json
+            case "${chain_type}" in
+                "")
+                    ;;&
+                mainnet)
+                    config_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/akash/chain.json
+                    ;;
+                sandbox)
+                    ;;
+            esac
             ;;
         stride)
             config_url=https://raw.githubusercontent.com/cosmos/chain-registry/master/stride/chain.json
@@ -532,11 +546,15 @@ fi
 
 # Snapshot
 if [ "$snapshot_dl" == true ]; then
+    if [ -z "${snapshot_url}" ]; then
+        snapshot_url=$(wget https://polkachu.com/api/v2/chain_snapshots/akash/mainnet -qO - 2>&1 | jq -r '.snapshot.url')
+    fi
+
     if [ -n "${snapshot_url}" ]; then
         rm -rf "$data_path"
         rm -rf "$wasm_path"
 
-        pushd "$(pwd)"
+        pushd "$(pwd)" > /dev/null
 
         mkdir -p "$data_path"
         cd "$data_path"
@@ -582,9 +600,7 @@ if [ "$snapshot_dl" == true ]; then
             mv wasm ../
         fi
 
-        popd
-    else
-        echo "Snapshot URL not found"
+        popd > /dev/null
     fi
 fi
 

@@ -1,6 +1,6 @@
-ARG GOVERSION
+ARG GOVERSION=1.23.1
 
-FROM golang:${GOVERSION}-bullseye as build
+FROM golang:${GOVERSION}-bullseye AS build
 
 ENV GO111MODULE=on
 ENV GOPROXY=https://proxy.golang.org,direct
