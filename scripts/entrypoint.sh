@@ -133,7 +133,7 @@ function content_type() {
             tar_cmd="tar xzf -"
             ;;
         *.tar.lz4*)
-            tar_cmd="lz4 -d | tar xf -"
+            tar_cmd="lz4 -cd | tar xf -"
             ;;
         *.tar.zst*)
             tar_cmd="zstd -cd | tar xf -"

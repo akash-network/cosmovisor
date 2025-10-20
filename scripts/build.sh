@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -ex
+
+arch=$1
+image=$2
+buildargs=$3
+
+# shellcheck disable=SC2016
+dockerfile=$(sed 's/cosmovisor-base:.*/cosmovisor-base:\$COSMOVISOR_VERSION-\$TARGETARCH/' < Dockerfile)
+
+docker build --platform=linux/"${arch}" -t "${image}" \
+$buildargs \
+. -f- <<EOF
+$dockerfile
+EOF
