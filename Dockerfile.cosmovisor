@@ -1,6 +1,6 @@
-ARG GOVERSION=1.23.1
+ARG GOVERSION=1.25.6
 
-FROM golang:${GOVERSION}-bullseye AS build
+FROM golang:${GOVERSION}-bookworm AS build
 
 ENV GO111MODULE=on
 ENV GOPROXY=https://proxy.golang.org,direct
@@ -11,7 +11,7 @@ ARG COSMOVISOR_VERSION
 
 RUN GOBIN=/usr/bin go install cosmossdk.io/tools/cosmovisor/cmd/cosmovisor@${COSMOVISOR_VERSION}
 
-FROM debian:bullseye AS base
+FROM debian:bookworm AS base
 LABEL "org.opencontainers.image.source"="https://github.com/akash-network/cosmovisor"
 
 COPY --from=build /usr/bin/cosmovisor /usr/bin
