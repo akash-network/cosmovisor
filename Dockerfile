@@ -25,7 +25,7 @@ RUN \
     wget \
     gzip \
     unzip \
-    netcat \
+    netcat-traditional \
     gettext-base \
     build-essential \
     ca-certificates \
